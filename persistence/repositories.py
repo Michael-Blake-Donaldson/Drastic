@@ -48,17 +48,32 @@ class ScenarioRepository:
         if source is None:
             return None
 
+        is_root_baseline = source.variant_label == "baseline" and source.base_scenario_id is None
+        if source.status == ScenarioStatus.LOCKED and not is_root_baseline:
+            return None
+
+        cleaned_label = variant_label.strip().lower()
+        if not cleaned_label:
+            return None
+
         now = utc_now()
         variant = replace(
             source,
             scenario_id=uuid4().hex,
-            name=f"{source.name} [{variant_label}]",
-            variant_label=variant_label,
+            name=f"{source.name} [{cleaned_label}]",
+            variant_label=cleaned_label,
             base_scenario_id=source.scenario_id,
+            status=ScenarioStatus.DRAFT,
             created_at=now,
             updated_at=now,
         )
         return self.save_scenario(variant)
+
+    def update_scenario_status(self, scenario_id: str, status: ScenarioStatus) -> Scenario | None:
+        scenario = self.get_scenario(scenario_id)
+        if scenario is None:
+            return None
+        return self.save_scenario(replace(scenario, status=status))
 
     def list_variants(self, base_scenario_id: str) -> list[ScenarioSummary]:
         with sqlite3.connect(self.database_path) as connection:

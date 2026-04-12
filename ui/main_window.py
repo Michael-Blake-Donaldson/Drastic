@@ -98,6 +98,7 @@ class MainWindow(QMainWindow):
         self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
         self.editor_inputs: list[QWidget] = []
+        self.compare_kpi_labels: dict[str, QLabel] = {}
         self.resource_add_button: QPushButton | None = None
         self.resource_remove_button: QPushButton | None = None
         self.personnel_add_button: QPushButton | None = None
@@ -448,6 +449,10 @@ class MainWindow(QMainWindow):
         branch_selected_button.clicked.connect(self._branch_selected_tree_node)
         compare_selected_button = QPushButton("Compare Selected vs Active")
         compare_selected_button.clicked.connect(self._compare_selected_with_active)
+        lock_selected_button = QPushButton("Lock Selected Baseline")
+        lock_selected_button.clicked.connect(self._lock_selected_tree_node)
+        unlock_selected_button = QPushButton("Unlock Selected Baseline")
+        unlock_selected_button.clicked.connect(self._unlock_selected_tree_node)
 
         selector_row.addWidget(QLabel("Scenario A"))
         selector_row.addWidget(self.compare_left_combo)
@@ -459,9 +464,21 @@ class MainWindow(QMainWindow):
         selector_row.addWidget(run_compare_button)
         selector_row.addWidget(export_compare_button)
 
+        kpi_row = QHBoxLayout()
+        self.compare_kpi_labels["critical_delta"] = QLabel("Critical delta: n/a")
+        self.compare_kpi_labels["overall_delta"] = QLabel("Overall delta: n/a")
+        self.compare_kpi_labels["cost_delta"] = QLabel("Cost delta: n/a")
+        self.compare_kpi_labels["winner"] = QLabel("Winner: n/a")
+        kpi_row.addWidget(self.compare_kpi_labels["critical_delta"])
+        kpi_row.addWidget(self.compare_kpi_labels["overall_delta"])
+        kpi_row.addWidget(self.compare_kpi_labels["cost_delta"])
+        kpi_row.addWidget(self.compare_kpi_labels["winner"])
+
         tree_actions = QHBoxLayout()
         tree_actions.addWidget(branch_selected_button)
         tree_actions.addWidget(compare_selected_button)
+        tree_actions.addWidget(lock_selected_button)
+        tree_actions.addWidget(unlock_selected_button)
         tree_actions.addStretch(1)
 
         lineage_tree = QTreeWidget()
@@ -474,6 +491,7 @@ class MainWindow(QMainWindow):
         self.compare_output = output
 
         layout.addLayout(selector_row)
+        layout.addLayout(kpi_row)
         layout.addWidget(QLabel("Branch Lineage"))
         layout.addWidget(lineage_tree)
         layout.addLayout(tree_actions)
@@ -490,7 +508,8 @@ class MainWindow(QMainWindow):
         summaries = self.scenario_repository.list_scenarios()
         for summary in summaries:
             variant_text = f"[{summary.variant_label}]"
-            label = f"{summary.name} {variant_text} • {summary.hazard_type.value} • {summary.location_label}"
+            status_text = f"({summary.status.value})"
+            label = f"{summary.name} {variant_text} {status_text} • {summary.hazard_type.value} • {summary.location_label}"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, summary.scenario_id)
             self.scenario_list_widget.addItem(item)
@@ -787,6 +806,14 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid Variant Label", "Variant label cannot be empty.")
             return
 
+        if self._is_locked(self.active_scenario) and not self._is_root_baseline(self.active_scenario):
+            QMessageBox.warning(
+                self,
+                "Branch Not Allowed",
+                "Locked non-baseline scenarios cannot be branched until unlocked.",
+            )
+            return
+
         if self._is_locked_baseline(self.active_scenario):
             source_scenario = self.active_scenario
         else:
@@ -828,11 +855,11 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Baseline locked: {self.active_scenario.name}")
 
     def _save_active_scenario(self) -> None:
-        if self._is_locked_baseline(self.active_scenario):
+        if self._is_locked(self.active_scenario):
             QMessageBox.warning(
                 self,
-                "Baseline Locked",
-                "This baseline is locked. Branch a variant to make changes.",
+                "Scenario Locked",
+                "This scenario is locked. Branch a variant to make changes.",
             )
             return
 
@@ -903,6 +930,12 @@ class MainWindow(QMainWindow):
 
         left_analysis = self.planning_engine.analyze(left_scenario)
         right_analysis = self.planning_engine.analyze(right_scenario)
+        winner = self._comparison_winner(left_analysis, right_analysis, profile)
+
+        critical_delta = right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent
+        overall_delta = right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent
+        cost_delta = right_analysis.total_estimated_cost - left_analysis.total_estimated_cost
+        self._update_compare_kpis(critical_delta, overall_delta, cost_delta, winner)
 
         left_lineage = self.scenario_repository.get_lineage(left_scenario.scenario_id)
         right_lineage = self.scenario_repository.get_lineage(right_scenario.scenario_id)
@@ -915,11 +948,11 @@ class MainWindow(QMainWindow):
             f"Lineage B: {self._format_lineage(right_lineage)}",
             "",
             "Top-level deltas (B - A):",
-            f"- Critical coverage: {right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent:+.1f}%",
-            f"- Overall coverage: {right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent:+.1f}%",
-            f"- Total estimated cost: ${right_analysis.total_estimated_cost - left_analysis.total_estimated_cost:+,.2f}",
+            f"- Critical coverage: {critical_delta:+.1f}%",
+            f"- Overall coverage: {overall_delta:+.1f}%",
+            f"- Total estimated cost: ${cost_delta:+,.2f}",
             "",
-            f"Comparison call: {self._comparison_winner(left_analysis, right_analysis, profile)}",
+            f"Comparison call: {winner}",
             "",
             "Detailed metric deltas:",
         ]
@@ -951,7 +984,7 @@ class MainWindow(QMainWindow):
             "left_analysis": left_analysis,
             "right_analysis": right_analysis,
             "profile": profile,
-            "winner": self._comparison_winner(left_analysis, right_analysis, profile),
+            "winner": winner,
             "lineage_left": self._format_lineage(left_lineage),
             "lineage_right": self._format_lineage(right_lineage),
         }
@@ -1005,6 +1038,18 @@ class MainWindow(QMainWindow):
             QMessageBox.warning(self, "Invalid Variant Label", "Variant label cannot be empty.")
             return
 
+        selected_scenario = self.scenario_repository.get_scenario(selected_id)
+        if selected_scenario is None:
+            QMessageBox.warning(self, "Branch Error", "Selected scenario could not be loaded.")
+            return
+        if selected_scenario.status == ScenarioStatus.LOCKED and not self._is_root_baseline(selected_scenario):
+            QMessageBox.warning(
+                self,
+                "Branch Not Allowed",
+                "Only locked root baselines can be branched. Unlock this scenario first.",
+            )
+            return
+
         variant = self.scenario_repository.branch_variant(selected_id, variant_label)
         if variant is None:
             QMessageBox.warning(self, "Branch Error", "Unable to branch selected scenario.")
@@ -1032,6 +1077,56 @@ class MainWindow(QMainWindow):
             self.compare_right_combo.setCurrentIndex(right_index)
         self._run_comparison()
 
+    def _lock_selected_tree_node(self) -> None:
+        selected_id = self._selected_tree_scenario_id()
+        if selected_id is None:
+            QMessageBox.information(self, "Lock Scenario", "Select a scenario in the branch tree first.")
+            return
+
+        scenario = self.scenario_repository.get_scenario(selected_id)
+        if scenario is None:
+            QMessageBox.warning(self, "Lock Scenario", "Selected scenario could not be loaded.")
+            return
+        if not self._is_root_baseline(scenario):
+            QMessageBox.warning(self, "Lock Not Allowed", "Only root baseline scenarios can be locked.")
+            return
+
+        updated = self.scenario_repository.update_scenario_status(selected_id, ScenarioStatus.LOCKED)
+        if updated is None:
+            QMessageBox.warning(self, "Lock Error", "Unable to lock selected scenario.")
+            return
+
+        if self.active_scenario.scenario_id == updated.scenario_id:
+            self.active_scenario = updated
+            self._populate_editor_from_scenario(updated)
+        self._refresh_scenario_list(selected_scenario_id=updated.scenario_id)
+        self.statusBar().showMessage(f"Locked baseline from tree: {updated.name}")
+
+    def _unlock_selected_tree_node(self) -> None:
+        selected_id = self._selected_tree_scenario_id()
+        if selected_id is None:
+            QMessageBox.information(self, "Unlock Scenario", "Select a scenario in the branch tree first.")
+            return
+
+        scenario = self.scenario_repository.get_scenario(selected_id)
+        if scenario is None:
+            QMessageBox.warning(self, "Unlock Scenario", "Selected scenario could not be loaded.")
+            return
+        if not self._is_root_baseline(scenario):
+            QMessageBox.warning(self, "Unlock Not Allowed", "Only root baseline scenarios can be unlocked.")
+            return
+
+        updated = self.scenario_repository.update_scenario_status(selected_id, ScenarioStatus.DRAFT)
+        if updated is None:
+            QMessageBox.warning(self, "Unlock Error", "Unable to unlock selected scenario.")
+            return
+
+        if self.active_scenario.scenario_id == updated.scenario_id:
+            self.active_scenario = updated
+            self._populate_editor_from_scenario(updated)
+        self._refresh_scenario_list(selected_scenario_id=updated.scenario_id)
+        self.statusBar().showMessage(f"Unlocked baseline from tree: {updated.name}")
+
     def _selected_tree_scenario_id(self) -> str | None:
         if self.lineage_tree is None:
             return None
@@ -1048,8 +1143,28 @@ class MainWindow(QMainWindow):
             and scenario.status == ScenarioStatus.LOCKED
         )
 
+    def _is_root_baseline(self, scenario: Scenario) -> bool:
+        return scenario.variant_label == "baseline" and scenario.base_scenario_id is None
+
+    def _is_locked(self, scenario: Scenario) -> bool:
+        return scenario.status == ScenarioStatus.LOCKED
+
+    def _update_compare_kpis(
+        self,
+        critical_delta: float,
+        overall_delta: float,
+        cost_delta: float,
+        winner: str,
+    ) -> None:
+        if not self.compare_kpi_labels:
+            return
+        self.compare_kpi_labels["critical_delta"].setText(f"Critical delta: {critical_delta:+.1f}%")
+        self.compare_kpi_labels["overall_delta"].setText(f"Overall delta: {overall_delta:+.1f}%")
+        self.compare_kpi_labels["cost_delta"].setText(f"Cost delta: ${cost_delta:+,.2f}")
+        self.compare_kpi_labels["winner"].setText(f"Winner: {winner}")
+
     def _apply_editor_lock_state(self) -> None:
-        enabled = not self._is_locked_baseline(self.active_scenario)
+        enabled = not self._is_locked(self.active_scenario)
         for widget in self.editor_inputs:
             widget.setEnabled(enabled)
         if self.resource_table is not None:
