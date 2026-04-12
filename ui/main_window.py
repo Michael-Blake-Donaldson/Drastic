@@ -5,10 +5,12 @@ from dataclasses import replace
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
+    QApplication,
     QComboBox,
     QDockWidget,
     QDoubleSpinBox,
     QFormLayout,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QLineEdit,
@@ -24,6 +26,7 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QScrollArea,
     QTreeWidget,
     QTreeWidgetItem,
     QToolBar,
@@ -47,7 +50,9 @@ from domain.models import HazardProfile, InfrastructureProfile, PopulationProfil
 from reference_data.geography import (
     format_location_label,
     get_region_profile,
-    list_countries,
+    get_world_region_for_country,
+    list_countries_for_world_region,
+    list_world_regions,
     list_regions,
     parse_location_label,
 )
@@ -133,10 +138,13 @@ class MainWindow(QMainWindow):
         self.active_scenario = active_scenario
         self.initial_analysis = initial_analysis
         self.scenario_list_widget: QListWidget | None = None
+        self.scenario_search_input: QLineEdit | None = None
+        self.scenario_status_filter_combo: QComboBox | None = None
         self.summary_labels: dict[str, QLabel] = {}
         self.results_notes: QTextEdit | None = None
 
         self.name_input: QLineEdit | None = None
+        self.world_region_combo: QComboBox | None = None
         self.country_combo: QComboBox | None = None
         self.region_combo: QComboBox | None = None
         self.latitude_input: QDoubleSpinBox | None = None
@@ -193,43 +201,44 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Offline-first mode enabled • Database: {self.config.database_path}")
 
     def _apply_modern_theme(self) -> None:
-        self.setFont(QFont("Segoe UI Variable", 10))
+        self.setFont(QFont("Segoe UI Variable", 11))
         self.setStyleSheet(
             """
             QMainWindow {
-                background-color: #f4f6f8;
+                background-color: #f2f5f8;
             }
             QDockWidget::title {
-                background: #103a4f;
-                color: #f8fbfd;
+                background: #e8eef3;
+                color: #163447;
                 padding: 8px 10px;
                 font-weight: 600;
+                border-bottom: 1px solid #d3dde6;
             }
             QToolBar {
-                background: #0d3448;
-                border: none;
+                background: #f8fafc;
+                border: 1px solid #dbe5ed;
                 spacing: 8px;
-                padding: 8px;
+                padding: 6px;
             }
             QToolButton {
-                background: #14506c;
-                color: #f8fbfd;
-                border: 1px solid #1d6686;
+                background: #1474a3;
+                color: #ffffff;
+                border: 1px solid #0f628a;
                 border-radius: 6px;
-                padding: 6px 10px;
+                padding: 7px 12px;
                 font-weight: 600;
             }
             QToolButton:hover {
-                background: #1a5f80;
+                background: #0f678f;
             }
             QTabWidget::pane {
-                border: 1px solid #cdd7df;
+                border: 1px solid #d4dfe8;
                 background: #ffffff;
             }
             QTabBar::tab {
-                background: #e3eaef;
-                color: #1d2b34;
-                border: 1px solid #cdd7df;
+                background: #edf2f7;
+                color: #22323d;
+                border: 1px solid #d4dfe8;
                 border-bottom: none;
                 padding: 8px 12px;
                 margin-right: 4px;
@@ -237,18 +246,22 @@ class MainWindow(QMainWindow):
             }
             QTabBar::tab:selected {
                 background: #ffffff;
-                color: #0d3448;
+                color: #0e4f70;
                 font-weight: 700;
             }
+            QLabel {
+                color: #1b2d3a;
+                font-size: 12px;
+            }
             QLabel#SectionHeader {
-                font-size: 13px;
+                font-size: 14px;
                 font-weight: 700;
-                color: #0d3448;
-                margin-top: 8px;
+                color: #0f5679;
+                margin-top: 10px;
                 margin-bottom: 4px;
             }
             QLabel#SubtleHint {
-                color: #4b5e6b;
+                color: #4f6573;
                 margin-bottom: 6px;
             }
             QLabel#ValidationBanner {
@@ -260,39 +273,85 @@ class MainWindow(QMainWindow):
                 font-weight: 600;
             }
             QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
-                border: 1px solid #b8c7d1;
+                border: 1px solid #c2d0da;
                 border-radius: 6px;
                 background: #ffffff;
+                color: #142836;
                 padding: 6px;
-                selection-background-color: #2a86b2;
+                selection-background-color: #1f84b3;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
+                min-height: 34px;
+            }
+            QComboBox QAbstractItemView {
+                background: #ffffff;
+                color: #142836;
+                border: 1px solid #c2d0da;
+                selection-background-color: #d9edf9;
+                selection-color: #0f3550;
+                outline: 0;
+            }
+            QComboBox::drop-down {
+                border: none;
+                width: 26px;
+            }
+            QTextEdit {
+                min-height: 120px;
             }
             QPushButton {
-                background: #135d7f;
-                color: #f8fbfd;
-                border: none;
+                background: #ffffff;
+                color: #145d80;
+                border: 1px solid #aac0cf;
                 border-radius: 6px;
                 padding: 7px 12px;
                 font-weight: 600;
             }
             QPushButton:hover {
-                background: #0f4f6d;
+                background: #e8f2f8;
             }
             QTableWidget, QTreeWidget, QListWidget {
                 background: #ffffff;
-                border: 1px solid #cdd7df;
+                border: 1px solid #d4dfe8;
+                color: #142631;
                 gridline-color: #e7edf2;
-                alternate-background-color: #f8fbfd;
+                alternate-background-color: #f4f9fc;
             }
             QHeaderView::section {
-                background: #e9f0f5;
+                background: #edf4f9;
                 color: #1f2e38;
                 border: 1px solid #d2dbe2;
                 padding: 6px;
                 font-weight: 700;
             }
+            QScrollArea {
+                border: none;
+                background: #ffffff;
+            }
+            QScrollArea > QWidget > QWidget#ScenarioContent {
+                background: #ffffff;
+            }
+            QLabel#MetricLabel {
+                background: #eef5fb;
+                border: 1px solid #c7d8e5;
+                border-radius: 6px;
+                color: #12384d;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 6px;
+            }
+            QLabel#CompareCard {
+                background: #f4f9fd;
+                border: 1px solid #c8d9e6;
+                border-radius: 8px;
+                color: #12384d;
+                font-size: 12px;
+                font-weight: 700;
+                padding: 8px;
+                min-height: 44px;
+            }
             QStatusBar {
-                background: #ecf2f6;
-                color: #173041;
+                background: #f5f8fb;
+                color: #1a3c51;
             }
             """
         )
@@ -352,11 +411,31 @@ class MainWindow(QMainWindow):
         navigation_dock = QDockWidget("Scenarios", self)
         navigation_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
 
+        wrapper = QWidget()
+        wrapper_layout = QVBoxLayout(wrapper)
+        wrapper_layout.setContentsMargins(8, 8, 8, 8)
+        wrapper_layout.setSpacing(6)
+
+        self.scenario_search_input = QLineEdit()
+        self.scenario_search_input.setPlaceholderText("Search scenarios...")
+        self.scenario_search_input.textChanged.connect(lambda _value: self._refresh_scenario_list())
+
+        self.scenario_status_filter_combo = QComboBox()
+        self.scenario_status_filter_combo.addItems(["All Statuses", "Draft", "Review", "Locked"])
+        self.scenario_status_filter_combo.currentIndexChanged.connect(lambda _idx: self._refresh_scenario_list())
+
         scenario_list = QListWidget()
+        scenario_list.setAlternatingRowColors(True)
         scenario_list.itemSelectionChanged.connect(self._load_selected_scenario)
         self.scenario_list_widget = scenario_list
-        navigation_dock.setWidget(scenario_list)
+
+        wrapper_layout.addWidget(self.scenario_search_input)
+        wrapper_layout.addWidget(self.scenario_status_filter_combo)
+        wrapper_layout.addWidget(scenario_list)
+
+        navigation_dock.setWidget(wrapper)
         self.addDockWidget(Qt.LeftDockWidgetArea, navigation_dock)
+        navigation_dock.setMinimumWidth(290)
         self._refresh_scenario_list()
 
     def _build_summary_dock(self) -> None:
@@ -367,15 +446,19 @@ class MainWindow(QMainWindow):
         layout = QVBoxLayout(summary_widget)
         layout.addWidget(QLabel("Critical Coverage"))
         self.summary_labels["critical"] = QLabel()
+        self.summary_labels["critical"].setObjectName("MetricLabel")
         layout.addWidget(self.summary_labels["critical"])
         layout.addWidget(QLabel("Overall Coverage"))
         self.summary_labels["overall"] = QLabel()
+        self.summary_labels["overall"].setObjectName("MetricLabel")
         layout.addWidget(self.summary_labels["overall"])
         layout.addWidget(QLabel("Estimated Cost"))
         self.summary_labels["cost"] = QLabel()
+        self.summary_labels["cost"].setObjectName("MetricLabel")
         layout.addWidget(self.summary_labels["cost"])
         layout.addWidget(QLabel("Confidence"))
         self.summary_labels["confidence"] = QLabel()
+        self.summary_labels["confidence"].setObjectName("MetricLabel")
         layout.addWidget(self.summary_labels["confidence"])
         layout.addWidget(QLabel("Risk Flags"))
         self.summary_labels["risks"] = QLabel()
@@ -397,16 +480,26 @@ class MainWindow(QMainWindow):
         self.setCentralWidget(tabs)
 
     def _build_overview_tab(self) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
+        content = QWidget()
+        content.setObjectName("ScenarioContent")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(14, 12, 14, 12)
+        layout.setSpacing(10)
 
         context_form = QFormLayout()
         population_form = QFormLayout()
         infrastructure_form = QFormLayout()
+        for form in (context_form, population_form, infrastructure_form):
+            form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            form.setFormAlignment(Qt.AlignTop)
+            form.setHorizontalSpacing(16)
+            form.setVerticalSpacing(8)
         self.name_input = QLineEdit()
+        self.world_region_combo = QComboBox()
         self.country_combo = QComboBox()
         self.region_combo = QComboBox()
-        self.country_combo.addItems(list_countries())
+        self.world_region_combo.addItems(list_world_regions())
+        self.world_region_combo.currentIndexChanged.connect(self._on_world_region_changed)
         self.country_combo.currentIndexChanged.connect(self._on_country_changed)
         self.region_combo.currentIndexChanged.connect(self._on_region_changed)
 
@@ -458,6 +551,7 @@ class MainWindow(QMainWindow):
         self.editor_inputs.extend(
             [
                 self.name_input,
+                self.world_region_combo,
                 self.country_combo,
                 self.region_combo,
                 self.latitude_input,
@@ -481,6 +575,7 @@ class MainWindow(QMainWindow):
         )
 
         context_form.addRow("Scenario Name", self.name_input)
+        context_form.addRow("World Region", self.world_region_combo)
         context_form.addRow("Country", self.country_combo)
         context_form.addRow("Region/State", self.region_combo)
         context_form.addRow("Latitude", self.latitude_input)
@@ -503,30 +598,36 @@ class MainWindow(QMainWindow):
         infrastructure_form.addRow("Local Water Liters/Day", self.water_availability_input)
         infrastructure_form.addRow("Local Food Supply Ratio", self.food_supply_ratio_input)
 
-        self.resource_table = QTableWidget(0, 5, self)
+        self.resource_table = QTableWidget(0, 5, content)
         self.resource_table.setHorizontalHeaderLabels(
             ["Name", "Category", "Quantity", "Unit", "Priority"]
         )
+        self.resource_table.setAlternatingRowColors(True)
+        self.resource_table.setMinimumHeight(140)
         self.resource_table.horizontalHeader().setStretchLastSection(True)
         resource_controls, self.resource_add_button, self.resource_remove_button = self._build_table_controls(
             on_add=self._add_resource_row,
             on_remove=lambda: self._remove_selected_rows(self.resource_table),
         )
 
-        self.personnel_table = QTableWidget(0, 5, self)
+        self.personnel_table = QTableWidget(0, 5, content)
         self.personnel_table.setHorizontalHeaderLabels(
             ["Role", "Count", "Shift Hours", "Hourly Cost", "Volunteers"]
         )
+        self.personnel_table.setAlternatingRowColors(True)
+        self.personnel_table.setMinimumHeight(140)
         self.personnel_table.horizontalHeader().setStretchLastSection(True)
         personnel_controls, self.personnel_add_button, self.personnel_remove_button = self._build_table_controls(
             on_add=self._add_personnel_row,
             on_remove=lambda: self._remove_selected_rows(self.personnel_table),
         )
 
-        self.transport_table = QTableWidget(0, 6, self)
+        self.transport_table = QTableWidget(0, 6, content)
         self.transport_table.setHorizontalHeaderLabels(
             ["Asset", "Capacity (kg)", "Quantity", "Speed (km/h)", "Reliability", "Cost/km"]
         )
+        self.transport_table.setAlternatingRowColors(True)
+        self.transport_table.setMinimumHeight(140)
         self.transport_table.horizontalHeader().setStretchLastSection(True)
         transport_controls, self.transport_add_button, self.transport_remove_button = self._build_table_controls(
             on_add=self._add_transport_row,
@@ -576,10 +677,15 @@ class MainWindow(QMainWindow):
         layout.addWidget(button_row)
         layout.addWidget(self._section_header("Change Preview"))
         layout.addWidget(self.change_preview)
-        if self.country_combo.count() > 0:
-            self._sync_regions_for_country(self.country_combo.itemText(0))
+        layout.addStretch(1)
+        if self.world_region_combo.count() > 0:
+            self._sync_countries_for_world_region(self.world_region_combo.itemText(0))
         self._populate_editor_from_scenario(self.active_scenario)
-        return widget
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setWidget(content)
+        return scroll
 
     def _build_table_controls(self, on_add: callable, on_remove: callable) -> tuple[QHBoxLayout, QPushButton, QPushButton]:
         controls = QHBoxLayout()
@@ -658,6 +764,7 @@ class MainWindow(QMainWindow):
 
         notes = QTextEdit()
         notes.setReadOnly(True)
+        notes.setFont(QFont("Consolas", 10))
         self.results_notes = notes
         self._update_results_view(self.initial_analysis)
         layout.addWidget(self._section_header("Planning Results"))
@@ -682,6 +789,8 @@ class MainWindow(QMainWindow):
         self.metric_filter_combo.currentIndexChanged.connect(self._run_comparison)
         run_compare_button = QPushButton("Run Comparison")
         run_compare_button.clicked.connect(self._run_comparison)
+        copy_compare_button = QPushButton("Copy Summary")
+        copy_compare_button.clicked.connect(self._copy_comparison_output)
         swap_button = QPushButton("Swap")
         swap_button.clicked.connect(self._swap_comparison_selection)
         export_compare_button = QPushButton("Export Comparison")
@@ -706,21 +815,27 @@ class MainWindow(QMainWindow):
         selector_row.addWidget(self.metric_filter_combo)
         selector_row.addWidget(swap_button)
         selector_row.addWidget(run_compare_button)
+        selector_row.addWidget(copy_compare_button)
         selector_row.addWidget(export_compare_button)
 
-        kpi_row = QHBoxLayout()
+        kpi_row = QGridLayout()
+        kpi_row.setHorizontalSpacing(10)
+        kpi_row.setVerticalSpacing(8)
         self.compare_kpi_labels["critical_delta"] = QLabel("Critical delta: n/a")
         self.compare_kpi_labels["overall_delta"] = QLabel("Overall delta: n/a")
         self.compare_kpi_labels["cost_delta"] = QLabel("Cost delta: n/a")
         self.compare_kpi_labels["delivery_days_delta"] = QLabel("Delivery days delta: n/a")
         self.compare_kpi_labels["daily_capacity_delta"] = QLabel("Daily capacity delta: n/a")
         self.compare_kpi_labels["winner"] = QLabel("Winner: n/a")
-        kpi_row.addWidget(self.compare_kpi_labels["critical_delta"])
-        kpi_row.addWidget(self.compare_kpi_labels["overall_delta"])
-        kpi_row.addWidget(self.compare_kpi_labels["cost_delta"])
-        kpi_row.addWidget(self.compare_kpi_labels["delivery_days_delta"])
-        kpi_row.addWidget(self.compare_kpi_labels["daily_capacity_delta"])
-        kpi_row.addWidget(self.compare_kpi_labels["winner"])
+        for label in self.compare_kpi_labels.values():
+            label.setObjectName("CompareCard")
+            label.setWordWrap(True)
+        kpi_row.addWidget(self.compare_kpi_labels["critical_delta"], 0, 0)
+        kpi_row.addWidget(self.compare_kpi_labels["overall_delta"], 0, 1)
+        kpi_row.addWidget(self.compare_kpi_labels["cost_delta"], 0, 2)
+        kpi_row.addWidget(self.compare_kpi_labels["delivery_days_delta"], 1, 0)
+        kpi_row.addWidget(self.compare_kpi_labels["daily_capacity_delta"], 1, 1)
+        kpi_row.addWidget(self.compare_kpi_labels["winner"], 1, 2)
 
         tree_actions = QHBoxLayout()
         tree_actions.addWidget(branch_selected_button)
@@ -731,10 +846,13 @@ class MainWindow(QMainWindow):
 
         lineage_tree = QTreeWidget()
         lineage_tree.setHeaderLabels(["Scenario Branch Tree"])
+        lineage_tree.setMinimumHeight(220)
         self.lineage_tree = lineage_tree
 
         output = QTextEdit()
         output.setReadOnly(True)
+        output.setFont(QFont("Consolas", 10))
+        output.setMinimumHeight(260)
         output.setPlainText("Select two scenarios and run comparison to view analysis deltas.")
         self.compare_output = output
 
@@ -756,7 +874,14 @@ class MainWindow(QMainWindow):
         self.scenario_list_widget.blockSignals(True)
         self.scenario_list_widget.clear()
         summaries = self.scenario_repository.list_scenarios()
+        search_text = self.scenario_search_input.text().strip().lower() if self.scenario_search_input else ""
+        selected_status = self.scenario_status_filter_combo.currentText() if self.scenario_status_filter_combo else "All Statuses"
         for summary in summaries:
+            if selected_status != "All Statuses" and summary.status.value != selected_status.lower():
+                continue
+            searchable = f"{summary.name} {summary.variant_label} {summary.hazard_type.value} {summary.location_label}".lower()
+            if search_text and search_text not in searchable:
+                continue
             variant_text = f"[{summary.variant_label}]"
             status_text = f"({summary.status.value})"
             label = f"{summary.name} {variant_text} {status_text} • {summary.hazard_type.value} • {summary.location_label}"
@@ -925,6 +1050,7 @@ class MainWindow(QMainWindow):
         return replace(
             self.active_scenario,
             name=self.name_input.text().strip() or self.active_scenario.name,
+            world_region=self._selected_world_region(),
             country=self._selected_country(),
             region=self._selected_region(),
             latitude=self.latitude_input.value() if self.latitude_input is not None else None,
@@ -957,15 +1083,28 @@ class MainWindow(QMainWindow):
         )
 
     def _set_location_from_scenario(self, scenario: Scenario) -> None:
-        if self.country_combo is None or self.region_combo is None:
+        if self.world_region_combo is None or self.country_combo is None or self.region_combo is None:
             return
 
+        world_region = scenario.world_region
         country = scenario.country
         region = scenario.region
         if not country or not region:
             parsed_country, parsed_region = parse_location_label(scenario.hazard_profile.location_label)
             country = country or parsed_country
             region = region or parsed_region
+
+        if world_region is None and country:
+            world_region = get_world_region_for_country(country)
+
+        if world_region is None:
+            world_region = self.world_region_combo.itemText(0) if self.world_region_combo.count() else ""
+        self._sync_countries_for_world_region(world_region)
+
+        world_region_index = self.world_region_combo.findText(world_region)
+        if world_region_index >= 0:
+            self.world_region_combo.setCurrentIndex(world_region_index)
+            self._sync_countries_for_world_region(world_region)
 
         if country is None:
             country = self.country_combo.itemText(0) if self.country_combo.count() else ""
@@ -1005,6 +1144,35 @@ class MainWindow(QMainWindow):
         value = self.region_combo.currentText().strip()
         return value or None
 
+    def _selected_world_region(self) -> str | None:
+        if self.world_region_combo is None:
+            return None
+        value = self.world_region_combo.currentText().strip()
+        return value or None
+
+    def _sync_countries_for_world_region(self, world_region: str) -> None:
+        if self.country_combo is None:
+            return
+        current_country = self.country_combo.currentText()
+        self.country_combo.blockSignals(True)
+        self.country_combo.clear()
+        for country in list_countries_for_world_region(world_region):
+            self.country_combo.addItem(country)
+        if self.country_combo.count() > 0:
+            index = self.country_combo.findText(current_country)
+            self.country_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.country_combo.blockSignals(False)
+        selected_country = self._selected_country()
+        if selected_country:
+            self._sync_regions_for_country(selected_country)
+
+    def _on_world_region_changed(self) -> None:
+        world_region = self._selected_world_region()
+        if world_region is None:
+            return
+        self._sync_countries_for_world_region(world_region)
+        self._on_country_changed()
+
     def _sync_regions_for_country(self, country: str) -> None:
         if self.region_combo is None:
             return
@@ -1022,6 +1190,14 @@ class MainWindow(QMainWindow):
         country = self._selected_country()
         if country is None:
             return
+        if self.world_region_combo is not None:
+            expected_world_region = get_world_region_for_country(country)
+            if expected_world_region is not None:
+                world_index = self.world_region_combo.findText(expected_world_region)
+                if world_index >= 0 and self.world_region_combo.currentIndex() != world_index:
+                    self.world_region_combo.blockSignals(True)
+                    self.world_region_combo.setCurrentIndex(world_index)
+                    self.world_region_combo.blockSignals(False)
         self._sync_regions_for_country(country)
         self._on_region_changed()
 
@@ -1278,6 +1454,8 @@ class MainWindow(QMainWindow):
             issues.append("Total population must be greater than zero.")
         if scenario.population_profile.displaced_population > scenario.population_profile.total_population:
             issues.append("Displaced population cannot exceed total population.")
+        if scenario.world_region is None:
+            issues.append("Select a world region to narrow crisis context.")
         if scenario.country is None or scenario.region is None:
             issues.append("Select both country and region for location-aware assumptions.")
         if scenario.hazard_profile.duration_days <= 0:
@@ -1641,25 +1819,47 @@ class MainWindow(QMainWindow):
         if self.results_notes is None:
             return
         lines = [
-            f"Critical coverage: {analysis.critical_coverage_percent}%",
-            f"Overall coverage: {analysis.overall_coverage_percent}%",
-            f"Estimated total cost: ${analysis.total_estimated_cost:,.2f}",
-            f"Confidence: {analysis.confidence_level.value}",
+            "Planning Summary",
+            f"- Critical coverage: {analysis.critical_coverage_percent:.1f}%",
+            f"- Overall coverage: {analysis.overall_coverage_percent:.1f}%",
+            f"- Estimated total cost: ${analysis.total_estimated_cost:,.2f}",
+            f"- Confidence: {analysis.confidence_level.value.title()}",
             "",
-            "Computed metrics:",
+            "Computed Metrics",
         ]
-        for key, value in analysis.metadata.items():
-            lines.append(f"- {key}: {value}")
+        for key, value in sorted(analysis.metadata.items()):
+            lines.append(f"- {self._format_metric_key(key)}: {self._format_metric_value(value)}")
         lines.append("")
-        lines.append("Unmet critical needs:")
+        lines.append("Unmet Critical Needs")
         if analysis.unmet_critical_needs:
             lines.extend(f"- {item}" for item in analysis.unmet_critical_needs)
         else:
             lines.append("- None")
         lines.append("")
-        lines.append("Assumptions trace:")
+        lines.append("Assumptions Trace")
         lines.extend(f"- {identifier}" for identifier in analysis.assumptions_trace)
         self.results_notes.setPlainText("\n".join(lines))
+
+    def _format_metric_key(self, key: str) -> str:
+        words = key.replace("_", " ").strip().split()
+        return " ".join(word.capitalize() for word in words)
+
+    def _format_metric_value(self, value: object) -> str:
+        if isinstance(value, float):
+            return f"{value:,.2f}"
+        if isinstance(value, int):
+            return f"{value:,}"
+        return str(value)
+
+    def _copy_comparison_output(self) -> None:
+        if self.compare_output is None:
+            return
+        text = self.compare_output.toPlainText().strip()
+        if not text:
+            self.statusBar().showMessage("No comparison summary to copy.")
+            return
+        QApplication.clipboard().setText(text)
+        self.statusBar().showMessage("Comparison summary copied to clipboard.")
 
     def _export_active_report(self) -> None:
         analysis = self.planning_engine.analyze(self.active_scenario)

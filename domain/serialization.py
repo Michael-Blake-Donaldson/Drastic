@@ -21,6 +21,7 @@ def scenario_to_dict(scenario: Scenario) -> dict[str, object]:
         "name": scenario.name,
         "variant_label": scenario.variant_label,
         "base_scenario_id": scenario.base_scenario_id,
+        "world_region": scenario.world_region,
         "country": scenario.country,
         "region": scenario.region,
         "latitude": scenario.latitude,
@@ -100,6 +101,7 @@ def scenario_from_dict(payload: dict[str, object]) -> Scenario:
         base_scenario_id=(
             str(payload["base_scenario_id"]) if payload.get("base_scenario_id") is not None else None
         ),
+        world_region=str(payload["world_region"]) if payload.get("world_region") is not None else None,
         country=str(payload["country"]) if payload.get("country") is not None else None,
         region=str(payload["region"]) if payload.get("region") is not None else None,
         latitude=float(payload["latitude"]) if payload.get("latitude") is not None else None,
