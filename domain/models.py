@@ -119,6 +119,17 @@ class Scenario:
 
 
 @dataclass(frozen=True)
+class ScenarioSummary:
+    scenario_id: str
+    name: str
+    hazard_type: HazardType
+    severity_band: str
+    location_label: str
+    status: ScenarioStatus
+    updated_at: datetime
+
+
+@dataclass(frozen=True)
 class RiskFlag:
     code: str
     title: str

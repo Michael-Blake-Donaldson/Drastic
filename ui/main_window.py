@@ -1,12 +1,22 @@
 from __future__ import annotations
 
+from dataclasses import replace
+
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction
 from PySide6.QtWidgets import (
+    QComboBox,
     QDockWidget,
+    QDoubleSpinBox,
+    QFormLayout,
     QLabel,
+    QLineEdit,
     QListWidget,
+    QListWidgetItem,
     QMainWindow,
+    QMessageBox,
+    QPushButton,
+    QSpinBox,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
@@ -18,7 +28,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AppConfig
+from domain.enums import HazardType
 from domain.models import AnalysisSummary, AssumptionRecord, Scenario
+from persistence.repositories import ScenarioRepository
+from engine.planner import PlanningEngine
+from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
+from services.scenario_factory import build_default_scenario
 
 
 class MainWindow(QMainWindow):
@@ -26,14 +41,39 @@ class MainWindow(QMainWindow):
         self,
         config: AppConfig,
         assumption_registry: tuple[AssumptionRecord, ...],
+        scenario_repository: ScenarioRepository,
+        planning_engine: PlanningEngine,
         active_scenario: Scenario,
         initial_analysis: AnalysisSummary,
     ) -> None:
         super().__init__()
         self.config = config
         self.assumption_registry = assumption_registry
+        self.scenario_repository = scenario_repository
+        self.planning_engine = planning_engine
         self.active_scenario = active_scenario
         self.initial_analysis = initial_analysis
+        self.scenario_list_widget: QListWidget | None = None
+        self.summary_labels: dict[str, QLabel] = {}
+        self.results_notes: QTextEdit | None = None
+
+        self.name_input: QLineEdit | None = None
+        self.location_input: QLineEdit | None = None
+        self.notes_input: QTextEdit | None = None
+        self.hazard_combo: QComboBox | None = None
+        self.severity_input: QLineEdit | None = None
+        self.duration_input: QSpinBox | None = None
+        self.infrastructure_damage_input: QDoubleSpinBox | None = None
+        self.total_population_input: QSpinBox | None = None
+        self.displaced_population_input: QSpinBox | None = None
+        self.children_input: QSpinBox | None = None
+        self.older_adults_input: QSpinBox | None = None
+        self.pregnant_input: QSpinBox | None = None
+        self.medically_vulnerable_input: QSpinBox | None = None
+        self.road_access_input: QDoubleSpinBox | None = None
+        self.health_operability_input: QDoubleSpinBox | None = None
+        self.water_availability_input: QDoubleSpinBox | None = None
+        self.food_supply_ratio_input: QDoubleSpinBox | None = None
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -50,9 +90,20 @@ class MainWindow(QMainWindow):
         toolbar.setMovable(False)
         self.addToolBar(toolbar)
 
-        new_project_action = QAction("New Project", self)
-        new_project_action.setStatusTip("Create a new scenario planning project")
+        new_project_action = QAction("New Scenario", self)
+        new_project_action.setStatusTip("Create a new scenario planning record")
+        new_project_action.triggered.connect(self._create_new_scenario)
         toolbar.addAction(new_project_action)
+
+        save_action = QAction("Save Scenario", self)
+        save_action.setStatusTip("Persist the active scenario to SQLite")
+        save_action.triggered.connect(self._save_active_scenario)
+        toolbar.addAction(save_action)
+
+        analyze_action = QAction("Run Analysis", self)
+        analyze_action.setStatusTip("Analyze the active scenario with the planning engine")
+        analyze_action.triggered.connect(self._run_analysis)
+        toolbar.addAction(analyze_action)
 
         compare_action = QAction("Compare Variants", self)
         compare_action.setStatusTip("Open the scenario comparison workspace")
@@ -63,22 +114,15 @@ class MainWindow(QMainWindow):
         toolbar.addAction(export_action)
 
     def _build_left_navigation(self) -> None:
-        navigation_dock = QDockWidget("Workspace", self)
+        navigation_dock = QDockWidget("Scenarios", self)
         navigation_dock.setAllowedAreas(Qt.LeftDockWidgetArea)
 
-        navigation_list = QListWidget()
-        navigation_list.addItems(
-            [
-                "Projects",
-                "Scenarios",
-                "Variants",
-                "Templates",
-                "Exports",
-                "Settings",
-            ]
-        )
-        navigation_dock.setWidget(navigation_list)
+        scenario_list = QListWidget()
+        scenario_list.itemSelectionChanged.connect(self._load_selected_scenario)
+        self.scenario_list_widget = scenario_list
+        navigation_dock.setWidget(scenario_list)
         self.addDockWidget(Qt.LeftDockWidgetArea, navigation_dock)
+        self._refresh_scenario_list()
 
     def _build_summary_dock(self) -> None:
         summary_dock = QDockWidget("Live Summary", self)
@@ -87,29 +131,30 @@ class MainWindow(QMainWindow):
         summary_widget = QWidget()
         layout = QVBoxLayout(summary_widget)
         layout.addWidget(QLabel("Critical Coverage"))
-        layout.addWidget(QLabel(f"{self.initial_analysis.critical_coverage_percent}%"))
+        self.summary_labels["critical"] = QLabel()
+        layout.addWidget(self.summary_labels["critical"])
         layout.addWidget(QLabel("Overall Coverage"))
-        layout.addWidget(QLabel(f"{self.initial_analysis.overall_coverage_percent}%"))
+        self.summary_labels["overall"] = QLabel()
+        layout.addWidget(self.summary_labels["overall"])
         layout.addWidget(QLabel("Estimated Cost"))
-        layout.addWidget(QLabel(f"${self.initial_analysis.total_estimated_cost:,.2f}"))
+        self.summary_labels["cost"] = QLabel()
+        layout.addWidget(self.summary_labels["cost"])
         layout.addWidget(QLabel("Confidence"))
-        layout.addWidget(QLabel(self.initial_analysis.confidence_level.value.title()))
+        self.summary_labels["confidence"] = QLabel()
+        layout.addWidget(self.summary_labels["confidence"])
         layout.addWidget(QLabel("Risk Flags"))
-        if self.initial_analysis.risk_flags:
-            for flag in self.initial_analysis.risk_flags:
-                label = QLabel(f"• {flag.title}")
-                label.setWordWrap(True)
-                layout.addWidget(label)
-        else:
-            layout.addWidget(QLabel("No active risk flags"))
+        self.summary_labels["risks"] = QLabel()
+        self.summary_labels["risks"].setWordWrap(True)
+        layout.addWidget(self.summary_labels["risks"])
         layout.addStretch(1)
 
         summary_dock.setWidget(summary_widget)
         self.addDockWidget(Qt.RightDockWidgetArea, summary_dock)
+        self._update_summary_panel(self.initial_analysis)
 
     def _build_central_workspace(self) -> None:
         tabs = QTabWidget(self)
-        tabs.addTab(self._build_overview_tab(), "Overview")
+        tabs.addTab(self._build_overview_tab(), "Scenario")
         tabs.addTab(self._build_assumptions_tab(), "Assumptions")
         tabs.addTab(self._build_results_tab(), "Results")
         self.setCentralWidget(tabs)
@@ -118,18 +163,78 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        intro = QTextEdit()
-        intro.setReadOnly(True)
-        intro.setPlainText(
-            "DRASTIC is being rebuilt as a Python-first, offline planning system.\n\n"
-            f"Active seeded scenario: {self.active_scenario.name}\n"
-            f"Hazard: {self.active_scenario.hazard_profile.hazard_type.value}\n"
-            f"Duration: {self.active_scenario.hazard_profile.duration_days} days\n"
-            f"Affected population: {self.active_scenario.population_profile.total_population:,}\n\n"
-            "This foundation now includes a first-pass standards-backed analysis slice wired into the desktop shell."
-        )
+        form = QFormLayout()
+        self.name_input = QLineEdit()
+        self.location_input = QLineEdit()
+        self.hazard_combo = QComboBox()
+        for hazard in HazardType:
+            self.hazard_combo.addItem(hazard.value, hazard)
+        self.severity_input = QLineEdit()
+        self.duration_input = QSpinBox()
+        self.duration_input.setRange(1, 365)
+        self.infrastructure_damage_input = QDoubleSpinBox()
+        self.infrastructure_damage_input.setRange(0.0, 100.0)
+        self.infrastructure_damage_input.setDecimals(1)
 
-        layout.addWidget(intro)
+        self.total_population_input = QSpinBox()
+        self.total_population_input.setRange(0, 100000000)
+        self.displaced_population_input = QSpinBox()
+        self.displaced_population_input.setRange(0, 100000000)
+        self.children_input = QSpinBox()
+        self.children_input.setRange(0, 100000000)
+        self.older_adults_input = QSpinBox()
+        self.older_adults_input.setRange(0, 100000000)
+        self.pregnant_input = QSpinBox()
+        self.pregnant_input.setRange(0, 100000000)
+        self.medically_vulnerable_input = QSpinBox()
+        self.medically_vulnerable_input.setRange(0, 100000000)
+
+        self.road_access_input = QDoubleSpinBox()
+        self.road_access_input.setRange(0.0, 1.0)
+        self.road_access_input.setDecimals(2)
+        self.health_operability_input = QDoubleSpinBox()
+        self.health_operability_input.setRange(0.0, 1.0)
+        self.health_operability_input.setDecimals(2)
+        self.water_availability_input = QDoubleSpinBox()
+        self.water_availability_input.setRange(0.0, 1000000000.0)
+        self.water_availability_input.setDecimals(1)
+        self.food_supply_ratio_input = QDoubleSpinBox()
+        self.food_supply_ratio_input.setRange(0.0, 1.0)
+        self.food_supply_ratio_input.setDecimals(2)
+
+        self.notes_input = QTextEdit()
+        self.notes_input.setMinimumHeight(110)
+
+        form.addRow("Scenario Name", self.name_input)
+        form.addRow("Location", self.location_input)
+        form.addRow("Hazard", self.hazard_combo)
+        form.addRow("Severity Band", self.severity_input)
+        form.addRow("Duration (days)", self.duration_input)
+        form.addRow("Infrastructure Damage %", self.infrastructure_damage_input)
+        form.addRow("Total Population", self.total_population_input)
+        form.addRow("Displaced Population", self.displaced_population_input)
+        form.addRow("Children Under 5", self.children_input)
+        form.addRow("Older Adults", self.older_adults_input)
+        form.addRow("Pregnant/Lactating", self.pregnant_input)
+        form.addRow("Medically Vulnerable", self.medically_vulnerable_input)
+        form.addRow("Road Access Score", self.road_access_input)
+        form.addRow("Health Facility Operability", self.health_operability_input)
+        form.addRow("Local Water Liters/Day", self.water_availability_input)
+        form.addRow("Local Food Supply Ratio", self.food_supply_ratio_input)
+        form.addRow("Notes", self.notes_input)
+
+        button_row = QWidget()
+        button_layout = QVBoxLayout(button_row)
+        save_button = QPushButton("Save Scenario")
+        save_button.clicked.connect(self._save_active_scenario)
+        analyze_button = QPushButton("Analyze Scenario")
+        analyze_button.clicked.connect(self._run_analysis)
+        button_layout.addWidget(save_button)
+        button_layout.addWidget(analyze_button)
+
+        layout.addLayout(form)
+        layout.addWidget(button_row)
+        self._populate_editor_from_scenario(self.active_scenario)
         return widget
 
     def _build_assumptions_tab(self) -> QWidget:
@@ -159,25 +264,165 @@ class MainWindow(QMainWindow):
 
         notes = QTextEdit()
         notes.setReadOnly(True)
+        self.results_notes = notes
+        self._update_results_view(self.initial_analysis)
+        layout.addWidget(notes)
+        return widget
+
+    def _refresh_scenario_list(self, selected_scenario_id: str | None = None) -> None:
+        if self.scenario_list_widget is None:
+            return
+
+        self.scenario_list_widget.blockSignals(True)
+        self.scenario_list_widget.clear()
+        summaries = self.scenario_repository.list_scenarios()
+        for summary in summaries:
+            label = f"{summary.name} • {summary.hazard_type.value} • {summary.location_label}"
+            item = QListWidgetItem(label)
+            item.setData(Qt.UserRole, summary.scenario_id)
+            self.scenario_list_widget.addItem(item)
+            if selected_scenario_id and summary.scenario_id == selected_scenario_id:
+                item.setSelected(True)
+
+        if not selected_scenario_id and summaries:
+            self.scenario_list_widget.setCurrentRow(0)
+        self.scenario_list_widget.blockSignals(False)
+
+    def _populate_editor_from_scenario(self, scenario: Scenario) -> None:
+        if not self.name_input:
+            return
+        self.name_input.setText(scenario.name)
+        self.location_input.setText(scenario.hazard_profile.location_label)
+        if self.hazard_combo is not None:
+            index = self.hazard_combo.findData(scenario.hazard_profile.hazard_type)
+            self.hazard_combo.setCurrentIndex(index)
+        self.severity_input.setText(scenario.hazard_profile.severity_band)
+        self.duration_input.setValue(scenario.hazard_profile.duration_days)
+        self.infrastructure_damage_input.setValue(scenario.hazard_profile.infrastructure_damage_percent)
+        self.total_population_input.setValue(scenario.population_profile.total_population)
+        self.displaced_population_input.setValue(scenario.population_profile.displaced_population)
+        self.children_input.setValue(scenario.population_profile.children_under_five)
+        self.older_adults_input.setValue(scenario.population_profile.older_adults)
+        self.pregnant_input.setValue(scenario.population_profile.pregnant_or_lactating_people)
+        self.medically_vulnerable_input.setValue(scenario.population_profile.medically_vulnerable_population)
+        self.road_access_input.setValue(scenario.infrastructure_profile.road_access_score)
+        self.health_operability_input.setValue(scenario.infrastructure_profile.health_facility_operability_score)
+        self.water_availability_input.setValue(scenario.infrastructure_profile.local_water_availability_liters_per_day)
+        self.food_supply_ratio_input.setValue(scenario.infrastructure_profile.local_food_supply_ratio)
+        self.notes_input.setPlainText(scenario.notes)
+
+    def _build_scenario_from_editor(self) -> Scenario:
+        hazard_type = self.hazard_combo.currentData() if self.hazard_combo is not None else HazardType.FLOOD
+        if not isinstance(hazard_type, HazardType):
+            hazard_type = HazardType.FLOOD
+
+        return replace(
+            self.active_scenario,
+            name=self.name_input.text().strip() or self.active_scenario.name,
+            hazard_profile=HazardProfile(
+                hazard_type=hazard_type,
+                severity_band=self.severity_input.text().strip() or "moderate",
+                duration_days=self.duration_input.value(),
+                location_label=self.location_input.text().strip() or "Unassigned Region",
+                infrastructure_damage_percent=self.infrastructure_damage_input.value(),
+            ),
+            population_profile=PopulationProfile(
+                total_population=self.total_population_input.value(),
+                displaced_population=self.displaced_population_input.value(),
+                children_under_five=self.children_input.value(),
+                older_adults=self.older_adults_input.value(),
+                pregnant_or_lactating_people=self.pregnant_input.value(),
+                medically_vulnerable_population=self.medically_vulnerable_input.value(),
+            ),
+            infrastructure_profile=InfrastructureProfile(
+                road_access_score=self.road_access_input.value(),
+                health_facility_operability_score=self.health_operability_input.value(),
+                local_water_availability_liters_per_day=self.water_availability_input.value(),
+                local_food_supply_ratio=self.food_supply_ratio_input.value(),
+            ),
+            notes=self.notes_input.toPlainText().strip(),
+        )
+
+    def _create_new_scenario(self) -> None:
+        scenario = self.scenario_repository.save_scenario(build_default_scenario())
+        self.active_scenario = scenario
+        self._populate_editor_from_scenario(scenario)
+        self._refresh_scenario_list(selected_scenario_id=scenario.scenario_id)
+        self.statusBar().showMessage(f"Created new scenario: {scenario.name}")
+        self._run_analysis()
+
+    def _save_active_scenario(self) -> None:
+        scenario = self._build_scenario_from_editor()
+        if scenario.population_profile.displaced_population > scenario.population_profile.total_population:
+            QMessageBox.warning(
+                self,
+                "Invalid Population",
+                "Displaced population cannot exceed total affected population.",
+            )
+            return
+
+        self.active_scenario = self.scenario_repository.save_scenario(scenario)
+        self._refresh_scenario_list(selected_scenario_id=self.active_scenario.scenario_id)
+        self.statusBar().showMessage(f"Saved scenario: {self.active_scenario.name}")
+
+    def _run_analysis(self) -> None:
+        self.active_scenario = self._build_scenario_from_editor()
+        self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
+        self._update_summary_panel(self.initial_analysis)
+        self._update_results_view(self.initial_analysis)
+        self.statusBar().showMessage(f"Analysis updated for scenario: {self.active_scenario.name}")
+
+    def _load_selected_scenario(self) -> None:
+        if self.scenario_list_widget is None:
+            return
+        items = self.scenario_list_widget.selectedItems()
+        if not items:
+            return
+        scenario_id = items[0].data(Qt.UserRole)
+        if not isinstance(scenario_id, str):
+            return
+
+        scenario = self.scenario_repository.get_scenario(scenario_id)
+        if scenario is None:
+            return
+
+        self.active_scenario = scenario
+        self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
+        self._populate_editor_from_scenario(self.active_scenario)
+        self._update_summary_panel(self.initial_analysis)
+        self._update_results_view(self.initial_analysis)
+        self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
+
+    def _update_summary_panel(self, analysis: AnalysisSummary) -> None:
+        self.summary_labels["critical"].setText(f"{analysis.critical_coverage_percent}%")
+        self.summary_labels["overall"].setText(f"{analysis.overall_coverage_percent}%")
+        self.summary_labels["cost"].setText(f"${analysis.total_estimated_cost:,.2f}")
+        self.summary_labels["confidence"].setText(analysis.confidence_level.value.title())
+        if analysis.risk_flags:
+            self.summary_labels["risks"].setText("\n".join(f"• {flag.title}" for flag in analysis.risk_flags))
+        else:
+            self.summary_labels["risks"].setText("No active risk flags")
+
+    def _update_results_view(self, analysis: AnalysisSummary) -> None:
+        if self.results_notes is None:
+            return
         lines = [
-            f"Critical coverage: {self.initial_analysis.critical_coverage_percent}%",
-            f"Overall coverage: {self.initial_analysis.overall_coverage_percent}%",
-            f"Estimated total cost: ${self.initial_analysis.total_estimated_cost:,.2f}",
-            f"Confidence: {self.initial_analysis.confidence_level.value}",
+            f"Critical coverage: {analysis.critical_coverage_percent}%",
+            f"Overall coverage: {analysis.overall_coverage_percent}%",
+            f"Estimated total cost: ${analysis.total_estimated_cost:,.2f}",
+            f"Confidence: {analysis.confidence_level.value}",
             "",
             "Computed metrics:",
         ]
-        for key, value in self.initial_analysis.metadata.items():
+        for key, value in analysis.metadata.items():
             lines.append(f"- {key}: {value}")
         lines.append("")
         lines.append("Unmet critical needs:")
-        if self.initial_analysis.unmet_critical_needs:
-            lines.extend(f"- {item}" for item in self.initial_analysis.unmet_critical_needs)
+        if analysis.unmet_critical_needs:
+            lines.extend(f"- {item}" for item in analysis.unmet_critical_needs)
         else:
             lines.append("- None")
         lines.append("")
         lines.append("Assumptions trace:")
-        lines.extend(f"- {identifier}" for identifier in self.initial_analysis.assumptions_trace)
-        notes.setPlainText("\n".join(lines))
-        layout.addWidget(notes)
-        return widget
+        lines.extend(f"- {identifier}" for identifier in analysis.assumptions_trace)
+        self.results_notes.setPlainText("\n".join(lines))
