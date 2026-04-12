@@ -82,6 +82,7 @@ def build_comparison_report(
     right_analysis: AnalysisSummary,
     profile: str,
     profile_weights: dict[str, float],
+    metric_filter: str,
     winner: str,
     lineage_left: str,
     lineage_right: str,
@@ -93,6 +94,7 @@ def build_comparison_report(
         "Comparison Configuration",
         f"- Profile: {profile}",
         f"- Profile weights: {profile_weights}",
+        f"- Metric filter: {metric_filter}",
         f"- Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
         f"- Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
         f"- Lineage A: {lineage_left}",
@@ -108,9 +110,23 @@ def build_comparison_report(
         f"- Transport wave delta: {_metric_delta(right_analysis, left_analysis, 'transport_estimated_waves')}",
         f"- Transport mass delta: {_metric_delta(right_analysis, left_analysis, 'transport_mass_required_kg')}",
         f"- Transport capacity delta: {_metric_delta(right_analysis, left_analysis, 'transport_capacity_kg')}",
+        f"- Estimated delivery days delta: {_metric_delta(right_analysis, left_analysis, 'transport_estimated_delivery_days')}",
+        f"- Daily movable capacity delta: {_metric_delta(right_analysis, left_analysis, 'transport_daily_movable_capacity_kg')}",
+        f"- Assumed route distance delta: {_metric_delta(right_analysis, left_analysis, 'transport_assumed_route_distance_km')}",
+        f"- Average speed delta: {_metric_delta(right_analysis, left_analysis, 'transport_average_speed_kmh')}",
+        "",
+        "Detailed Metric Deltas",
         "",
         "Unmet Needs A",
     ]
+
+    deltas = filtered_metric_deltas(left_analysis.metadata, right_analysis.metadata, metric_filter)
+    if deltas:
+        for key, delta in deltas:
+            lines.append(f"- {key}: {delta:+.2f}")
+    else:
+        lines.append("- No numeric metrics matched the selected filter.")
+    lines.append("")
 
     if left_analysis.unmet_critical_needs:
         lines.extend(f"- {item}" for item in left_analysis.unmet_critical_needs)
@@ -137,3 +153,48 @@ def _metric_delta(right_analysis: AnalysisSummary, left_analysis: AnalysisSummar
     if isinstance(right_value, (int, float)) and isinstance(left_value, (int, float)):
         return f"{right_value - left_value:+.2f}"
     return "n/a"
+
+
+def filtered_metric_deltas(
+    left_metadata: dict[str, object],
+    right_metadata: dict[str, object],
+    metric_filter: str,
+) -> list[tuple[str, float]]:
+    shared_keys = sorted(set(left_metadata).intersection(right_metadata))
+    deltas: list[tuple[str, float]] = []
+    for key in shared_keys:
+        left_value = left_metadata[key]
+        right_value = right_metadata[key]
+        if not isinstance(left_value, (int, float)) or not isinstance(right_value, (int, float)):
+            continue
+        if not matches_metric_filter(key, metric_filter):
+            continue
+        deltas.append((key, float(right_value - left_value)))
+    return deltas
+
+
+def matches_metric_filter(key: str, selected_filter: str) -> bool:
+    if selected_filter == "All Metrics":
+        return True
+    category = metric_category(key)
+    if selected_filter == "Coverage":
+        return category == "Coverage"
+    if selected_filter == "Cost":
+        return category == "Cost"
+    if selected_filter == "Staffing":
+        return category == "Staffing"
+    if selected_filter == "Transport":
+        return category == "Transport"
+    return True
+
+
+def metric_category(key: str) -> str:
+    if key.startswith("transport_"):
+        return "Transport"
+    if key.startswith("personnel_") or "staff" in key:
+        return "Staffing"
+    if key.startswith("cost_") or key.endswith("_cost") or "cost" in key:
+        return "Cost"
+    if "coverage" in key:
+        return "Coverage"
+    return "Other"

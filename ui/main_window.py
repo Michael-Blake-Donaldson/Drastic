@@ -45,8 +45,67 @@ from persistence.repositories import ScenarioRepository
 from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
 from services.report_export import write_text_report
-from services.report_templates import build_comparison_report, build_scenario_report
+from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
 from services.scenario_factory import build_default_scenario
+
+
+def build_comparison_output_text(
+    left_scenario: Scenario,
+    right_scenario: Scenario,
+    left_analysis: AnalysisSummary,
+    right_analysis: AnalysisSummary,
+    profile: str,
+    profile_weights: dict[str, float],
+    metric_filter: str,
+    winner: str,
+    lineage_left: str,
+    lineage_right: str,
+) -> str:
+    critical_delta = right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent
+    overall_delta = right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent
+    cost_delta = right_analysis.total_estimated_cost - left_analysis.total_estimated_cost
+
+    lines = [
+        f"Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
+        f"Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
+        f"Profile: {profile}",
+        f"Profile weights: {profile_weights}",
+        f"Metric filter: {metric_filter}",
+        f"Lineage A: {lineage_left}",
+        f"Lineage B: {lineage_right}",
+        "",
+        "Top-level deltas (B - A):",
+        f"- Critical coverage: {critical_delta:+.1f}%",
+        f"- Overall coverage: {overall_delta:+.1f}%",
+        f"- Total estimated cost: ${cost_delta:+,.2f}",
+        "",
+        f"Comparison call: {winner}",
+        "",
+        "Detailed metric deltas:",
+    ]
+
+    deltas = filtered_metric_deltas(left_analysis.metadata, right_analysis.metadata, metric_filter)
+    if deltas:
+        for key, delta in deltas:
+            lines.append(f"- {key}: {delta:+.2f}")
+    else:
+        lines.append("- No numeric metrics matched the selected filter.")
+
+    lines.append("")
+    lines.append("Scenario A unmet critical needs:")
+    if left_analysis.unmet_critical_needs:
+        lines.extend(f"- {item}" for item in left_analysis.unmet_critical_needs)
+    else:
+        lines.append("- None")
+
+    lines.append("")
+    lines.append("Scenario B unmet critical needs:")
+    if right_analysis.unmet_critical_needs:
+        lines.extend(f"- {item}" for item in right_analysis.unmet_critical_needs)
+    else:
+        lines.append("- None")
+
+    return "\n".join(lines)
 
 
 class MainWindow(QMainWindow):
@@ -474,10 +533,14 @@ class MainWindow(QMainWindow):
         self.compare_kpi_labels["critical_delta"] = QLabel("Critical delta: n/a")
         self.compare_kpi_labels["overall_delta"] = QLabel("Overall delta: n/a")
         self.compare_kpi_labels["cost_delta"] = QLabel("Cost delta: n/a")
+        self.compare_kpi_labels["delivery_days_delta"] = QLabel("Delivery days delta: n/a")
+        self.compare_kpi_labels["daily_capacity_delta"] = QLabel("Daily capacity delta: n/a")
         self.compare_kpi_labels["winner"] = QLabel("Winner: n/a")
         kpi_row.addWidget(self.compare_kpi_labels["critical_delta"])
         kpi_row.addWidget(self.compare_kpi_labels["overall_delta"])
         kpi_row.addWidget(self.compare_kpi_labels["cost_delta"])
+        kpi_row.addWidget(self.compare_kpi_labels["delivery_days_delta"])
+        kpi_row.addWidget(self.compare_kpi_labels["daily_capacity_delta"])
         kpi_row.addWidget(self.compare_kpi_labels["winner"])
 
         tree_actions = QHBoxLayout()
@@ -943,57 +1006,40 @@ class MainWindow(QMainWindow):
         critical_delta = right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent
         overall_delta = right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent
         cost_delta = right_analysis.total_estimated_cost - left_analysis.total_estimated_cost
-        self._update_compare_kpis(critical_delta, overall_delta, cost_delta, winner)
+        delivery_days_delta = self._metadata_delta(
+            left_analysis,
+            right_analysis,
+            "transport_estimated_delivery_days",
+        )
+        daily_capacity_delta = self._metadata_delta(
+            left_analysis,
+            right_analysis,
+            "transport_daily_movable_capacity_kg",
+        )
+        self._update_compare_kpis(
+            critical_delta,
+            overall_delta,
+            cost_delta,
+            delivery_days_delta,
+            daily_capacity_delta,
+            winner,
+        )
 
         left_lineage = self.scenario_repository.get_lineage(left_scenario.scenario_id)
         right_lineage = self.scenario_repository.get_lineage(right_scenario.scenario_id)
 
-        lines = [
-            f"Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
-            f"Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
-            f"Profile: {profile}",
-            f"Profile weights: {profile_weights}",
-            f"Metric filter: {metric_filter}",
-            f"Lineage A: {self._format_lineage(left_lineage)}",
-            f"Lineage B: {self._format_lineage(right_lineage)}",
-            "",
-            "Top-level deltas (B - A):",
-            f"- Critical coverage: {critical_delta:+.1f}%",
-            f"- Overall coverage: {overall_delta:+.1f}%",
-            f"- Total estimated cost: ${cost_delta:+,.2f}",
-            "",
-            f"Comparison call: {winner}",
-            "",
-            "Detailed metric deltas:",
-        ]
-
-        shared_keys = sorted(set(left_analysis.metadata).intersection(right_analysis.metadata))
-        filtered_count = 0
-        for key in shared_keys:
-            left_value = left_analysis.metadata[key]
-            right_value = right_analysis.metadata[key]
-            if isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
-                if not self._matches_metric_filter(key, metric_filter):
-                    continue
-                filtered_count += 1
-                lines.append(f"- {key}: {right_value - left_value:+.2f}")
-
-        if filtered_count == 0:
-            lines.append("- No numeric metrics matched the selected filter.")
-
-        lines.append("")
-        lines.append("Scenario A unmet critical needs:")
-        if left_analysis.unmet_critical_needs:
-            lines.extend(f"- {item}" for item in left_analysis.unmet_critical_needs)
-        else:
-            lines.append("- None")
-
-        lines.append("")
-        lines.append("Scenario B unmet critical needs:")
-        if right_analysis.unmet_critical_needs:
-            lines.extend(f"- {item}" for item in right_analysis.unmet_critical_needs)
-        else:
-            lines.append("- None")
+        output_text = build_comparison_output_text(
+            left_scenario=left_scenario,
+            right_scenario=right_scenario,
+            left_analysis=left_analysis,
+            right_analysis=right_analysis,
+            profile=profile,
+            profile_weights=profile_weights,
+            metric_filter=metric_filter,
+            winner=winner,
+            lineage_left=self._format_lineage(left_lineage),
+            lineage_right=self._format_lineage(right_lineage),
+        )
 
         self.last_comparison_payload = {
             "left_scenario": left_scenario,
@@ -1007,7 +1053,7 @@ class MainWindow(QMainWindow):
             "lineage_left": self._format_lineage(left_lineage),
             "lineage_right": self._format_lineage(right_lineage),
         }
-        self.compare_output.setPlainText("\n".join(lines))
+        self.compare_output.setPlainText(output_text)
 
     def _swap_comparison_selection(self) -> None:
         if self.compare_left_combo is None or self.compare_right_combo is None:
@@ -1042,30 +1088,12 @@ class MainWindow(QMainWindow):
             return {"critical": 1.5, "overall": 1.0, "cost": 1 / 5000}
         return {"critical": 2.0, "overall": 1.0, "cost": 1 / 10000}
 
-    def _matches_metric_filter(self, key: str, selected_filter: str) -> bool:
-        if selected_filter == "All Metrics":
-            return True
-        category = self._metric_category(key)
-        if selected_filter == "Coverage":
-            return category == "Coverage"
-        if selected_filter == "Cost":
-            return category == "Cost"
-        if selected_filter == "Staffing":
-            return category == "Staffing"
-        if selected_filter == "Transport":
-            return category == "Transport"
-        return True
-
-    def _metric_category(self, key: str) -> str:
-        if key.startswith("transport_"):
-            return "Transport"
-        if key.startswith("personnel_") or "staff" in key:
-            return "Staffing"
-        if key.startswith("cost_") or key.endswith("_cost") or "cost" in key:
-            return "Cost"
-        if "coverage" in key:
-            return "Coverage"
-        return "Other"
+    def _metadata_delta(self, left: AnalysisSummary, right: AnalysisSummary, key: str) -> float | None:
+        left_value = left.metadata.get(key)
+        right_value = right.metadata.get(key)
+        if isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
+            return float(right_value - left_value)
+        return None
 
     def _branch_selected_tree_node(self) -> None:
         selected_id = self._selected_tree_scenario_id()
@@ -1197,6 +1225,8 @@ class MainWindow(QMainWindow):
         critical_delta: float,
         overall_delta: float,
         cost_delta: float,
+        delivery_days_delta: float | None,
+        daily_capacity_delta: float | None,
         winner: str,
     ) -> None:
         if not self.compare_kpi_labels:
@@ -1204,6 +1234,14 @@ class MainWindow(QMainWindow):
         self.compare_kpi_labels["critical_delta"].setText(f"Critical delta: {critical_delta:+.1f}%")
         self.compare_kpi_labels["overall_delta"].setText(f"Overall delta: {overall_delta:+.1f}%")
         self.compare_kpi_labels["cost_delta"].setText(f"Cost delta: ${cost_delta:+,.2f}")
+        if delivery_days_delta is None:
+            self.compare_kpi_labels["delivery_days_delta"].setText("Delivery days delta: n/a")
+        else:
+            self.compare_kpi_labels["delivery_days_delta"].setText(f"Delivery days delta: {delivery_days_delta:+.2f}")
+        if daily_capacity_delta is None:
+            self.compare_kpi_labels["daily_capacity_delta"].setText("Daily capacity delta: n/a")
+        else:
+            self.compare_kpi_labels["daily_capacity_delta"].setText(f"Daily capacity delta: {daily_capacity_delta:+,.2f} kg")
         self.compare_kpi_labels["winner"].setText(f"Winner: {winner}")
 
     def _apply_editor_lock_state(self) -> None:
@@ -1285,6 +1323,7 @@ class MainWindow(QMainWindow):
             right_analysis=payload["right_analysis"],
             profile=payload["profile"],
             profile_weights=payload["profile_weights"],
+            metric_filter=payload["metric_filter"],
             winner=payload["winner"],
             lineage_left=payload["lineage_left"],
             lineage_right=payload["lineage_right"],
