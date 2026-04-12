@@ -60,6 +60,60 @@ class ScenarioRepository:
         )
         return self.save_scenario(variant)
 
+    def list_variants(self, base_scenario_id: str) -> list[ScenarioSummary]:
+        with sqlite3.connect(self.database_path) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """
+                SELECT scenario_id, name, variant_label, base_scenario_id, hazard_type, severity_band, location_label, status, updated_at
+                FROM scenarios
+                WHERE base_scenario_id = ?
+                ORDER BY updated_at DESC
+                """,
+                (base_scenario_id,),
+            )
+            rows = cursor.fetchall()
+
+        return [
+            ScenarioSummary(
+                scenario_id=row[0],
+                name=row[1],
+                variant_label=row[2],
+                base_scenario_id=row[3],
+                hazard_type=HazardType(row[4]),
+                severity_band=row[5],
+                location_label=row[6],
+                status=ScenarioStatus(row[7]),
+                updated_at=datetime.fromisoformat(row[8]),
+            )
+            for row in rows
+        ]
+
+    def get_lineage(self, scenario_id: str) -> list[ScenarioSummary]:
+        lineage: list[ScenarioSummary] = []
+        current = self.get_scenario(scenario_id)
+
+        while current is not None:
+            lineage.append(
+                ScenarioSummary(
+                    scenario_id=current.scenario_id,
+                    name=current.name,
+                    variant_label=current.variant_label,
+                    base_scenario_id=current.base_scenario_id,
+                    hazard_type=current.hazard_profile.hazard_type,
+                    severity_band=current.hazard_profile.severity_band,
+                    location_label=current.hazard_profile.location_label,
+                    status=current.status,
+                    updated_at=current.updated_at,
+                )
+            )
+            if current.base_scenario_id is None:
+                break
+            current = self.get_scenario(current.base_scenario_id)
+
+        lineage.reverse()
+        return lineage
+
     def get_scenario(self, scenario_id: str) -> Scenario | None:
         with sqlite3.connect(self.database_path) as connection:
             cursor = connection.cursor()
