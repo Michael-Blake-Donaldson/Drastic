@@ -3,7 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 
 from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction
+from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QComboBox,
     QDockWidget,
@@ -142,6 +142,8 @@ class MainWindow(QMainWindow):
         self.latitude_input: QDoubleSpinBox | None = None
         self.longitude_input: QDoubleSpinBox | None = None
         self.notes_input: QTextEdit | None = None
+        self.validation_banner: QLabel | None = None
+        self.change_preview: QTextEdit | None = None
         self.hazard_combo: QComboBox | None = None
         self.severity_input: QLineEdit | None = None
         self.duration_input: QSpinBox | None = None
@@ -181,6 +183,7 @@ class MainWindow(QMainWindow):
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
+        self._apply_modern_theme()
 
         self._build_toolbar()
         self._build_left_navigation()
@@ -188,6 +191,122 @@ class MainWindow(QMainWindow):
         self._build_central_workspace()
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage(f"Offline-first mode enabled • Database: {self.config.database_path}")
+
+    def _apply_modern_theme(self) -> None:
+        self.setFont(QFont("Segoe UI Variable", 10))
+        self.setStyleSheet(
+            """
+            QMainWindow {
+                background-color: #f4f6f8;
+            }
+            QDockWidget::title {
+                background: #103a4f;
+                color: #f8fbfd;
+                padding: 8px 10px;
+                font-weight: 600;
+            }
+            QToolBar {
+                background: #0d3448;
+                border: none;
+                spacing: 8px;
+                padding: 8px;
+            }
+            QToolButton {
+                background: #14506c;
+                color: #f8fbfd;
+                border: 1px solid #1d6686;
+                border-radius: 6px;
+                padding: 6px 10px;
+                font-weight: 600;
+            }
+            QToolButton:hover {
+                background: #1a5f80;
+            }
+            QTabWidget::pane {
+                border: 1px solid #cdd7df;
+                background: #ffffff;
+            }
+            QTabBar::tab {
+                background: #e3eaef;
+                color: #1d2b34;
+                border: 1px solid #cdd7df;
+                border-bottom: none;
+                padding: 8px 12px;
+                margin-right: 4px;
+                min-width: 110px;
+            }
+            QTabBar::tab:selected {
+                background: #ffffff;
+                color: #0d3448;
+                font-weight: 700;
+            }
+            QLabel#SectionHeader {
+                font-size: 13px;
+                font-weight: 700;
+                color: #0d3448;
+                margin-top: 8px;
+                margin-bottom: 4px;
+            }
+            QLabel#SubtleHint {
+                color: #4b5e6b;
+                margin-bottom: 6px;
+            }
+            QLabel#ValidationBanner {
+                background: #fff0f0;
+                color: #8a1b1b;
+                border: 1px solid #efc1c1;
+                border-radius: 6px;
+                padding: 8px;
+                font-weight: 600;
+            }
+            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
+                border: 1px solid #b8c7d1;
+                border-radius: 6px;
+                background: #ffffff;
+                padding: 6px;
+                selection-background-color: #2a86b2;
+            }
+            QPushButton {
+                background: #135d7f;
+                color: #f8fbfd;
+                border: none;
+                border-radius: 6px;
+                padding: 7px 12px;
+                font-weight: 600;
+            }
+            QPushButton:hover {
+                background: #0f4f6d;
+            }
+            QTableWidget, QTreeWidget, QListWidget {
+                background: #ffffff;
+                border: 1px solid #cdd7df;
+                gridline-color: #e7edf2;
+                alternate-background-color: #f8fbfd;
+            }
+            QHeaderView::section {
+                background: #e9f0f5;
+                color: #1f2e38;
+                border: 1px solid #d2dbe2;
+                padding: 6px;
+                font-weight: 700;
+            }
+            QStatusBar {
+                background: #ecf2f6;
+                color: #173041;
+            }
+            """
+        )
+
+    def _section_header(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("SectionHeader")
+        return label
+
+    def _subtle_hint(self, text: str) -> QLabel:
+        label = QLabel(text)
+        label.setObjectName("SubtleHint")
+        label.setWordWrap(True)
+        return label
 
     def _build_toolbar(self) -> None:
         toolbar = QToolBar("Main Toolbar", self)
@@ -281,7 +400,9 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        form = QFormLayout()
+        context_form = QFormLayout()
+        population_form = QFormLayout()
+        infrastructure_form = QFormLayout()
         self.name_input = QLineEdit()
         self.country_combo = QComboBox()
         self.region_combo = QComboBox()
@@ -359,26 +480,28 @@ class MainWindow(QMainWindow):
             ]
         )
 
-        form.addRow("Scenario Name", self.name_input)
-        form.addRow("Country", self.country_combo)
-        form.addRow("Region/State", self.region_combo)
-        form.addRow("Latitude", self.latitude_input)
-        form.addRow("Longitude", self.longitude_input)
-        form.addRow("Hazard", self.hazard_combo)
-        form.addRow("Severity Band", self.severity_input)
-        form.addRow("Duration (days)", self.duration_input)
-        form.addRow("Infrastructure Damage %", self.infrastructure_damage_input)
-        form.addRow("Total Population", self.total_population_input)
-        form.addRow("Displaced Population", self.displaced_population_input)
-        form.addRow("Children Under 5", self.children_input)
-        form.addRow("Older Adults", self.older_adults_input)
-        form.addRow("Pregnant/Lactating", self.pregnant_input)
-        form.addRow("Medically Vulnerable", self.medically_vulnerable_input)
-        form.addRow("Road Access Score", self.road_access_input)
-        form.addRow("Health Facility Operability", self.health_operability_input)
-        form.addRow("Local Water Liters/Day", self.water_availability_input)
-        form.addRow("Local Food Supply Ratio", self.food_supply_ratio_input)
-        form.addRow("Notes", self.notes_input)
+        context_form.addRow("Scenario Name", self.name_input)
+        context_form.addRow("Country", self.country_combo)
+        context_form.addRow("Region/State", self.region_combo)
+        context_form.addRow("Latitude", self.latitude_input)
+        context_form.addRow("Longitude", self.longitude_input)
+        context_form.addRow("Hazard", self.hazard_combo)
+        context_form.addRow("Severity Band", self.severity_input)
+        context_form.addRow("Duration (days)", self.duration_input)
+        context_form.addRow("Notes", self.notes_input)
+
+        population_form.addRow("Total Population", self.total_population_input)
+        population_form.addRow("Displaced Population", self.displaced_population_input)
+        population_form.addRow("Children Under 5", self.children_input)
+        population_form.addRow("Older Adults", self.older_adults_input)
+        population_form.addRow("Pregnant/Lactating", self.pregnant_input)
+        population_form.addRow("Medically Vulnerable", self.medically_vulnerable_input)
+
+        infrastructure_form.addRow("Infrastructure Damage %", self.infrastructure_damage_input)
+        infrastructure_form.addRow("Road Access Score", self.road_access_input)
+        infrastructure_form.addRow("Health Facility Operability", self.health_operability_input)
+        infrastructure_form.addRow("Local Water Liters/Day", self.water_availability_input)
+        infrastructure_form.addRow("Local Food Supply Ratio", self.food_supply_ratio_input)
 
         self.resource_table = QTableWidget(0, 5, self)
         self.resource_table.setHorizontalHeaderLabels(
@@ -417,20 +540,42 @@ class MainWindow(QMainWindow):
         self.save_button = save_button
         analyze_button = QPushButton("Analyze Scenario")
         analyze_button.clicked.connect(self._run_analysis)
+        preview_button = QPushButton("Preview Changes")
+        preview_button.clicked.connect(self._preview_changes)
         button_layout.addWidget(save_button)
         button_layout.addWidget(analyze_button)
+        button_layout.addWidget(preview_button)
 
-        layout.addLayout(form)
-        layout.addWidget(QLabel("Resources"))
+        self.validation_banner = QLabel("")
+        self.validation_banner.setObjectName("ValidationBanner")
+        self.validation_banner.setWordWrap(True)
+        self.validation_banner.hide()
+
+        self.change_preview = QTextEdit()
+        self.change_preview.setReadOnly(True)
+        self.change_preview.setMinimumHeight(140)
+        self.change_preview.setPlainText("Run Preview Changes to review edits before save/analyze.")
+
+        layout.addWidget(self._section_header("Scenario Context"))
+        layout.addWidget(self._subtle_hint("Set location and baseline conditions before analysis."))
+        layout.addLayout(context_form)
+        layout.addWidget(self._section_header("Population Profile"))
+        layout.addLayout(population_form)
+        layout.addWidget(self._section_header("Infrastructure Profile"))
+        layout.addLayout(infrastructure_form)
+        layout.addWidget(self.validation_banner)
+        layout.addWidget(self._section_header("Resources"))
         layout.addWidget(self.resource_table)
         layout.addLayout(resource_controls)
-        layout.addWidget(QLabel("Personnel"))
+        layout.addWidget(self._section_header("Personnel"))
         layout.addWidget(self.personnel_table)
         layout.addLayout(personnel_controls)
-        layout.addWidget(QLabel("Transportation"))
+        layout.addWidget(self._section_header("Transportation"))
         layout.addWidget(self.transport_table)
         layout.addLayout(transport_controls)
         layout.addWidget(button_row)
+        layout.addWidget(self._section_header("Change Preview"))
+        layout.addWidget(self.change_preview)
         if self.country_combo.count() > 0:
             self._sync_regions_for_country(self.country_combo.itemText(0))
         self._populate_editor_from_scenario(self.active_scenario)
@@ -502,6 +647,8 @@ class MainWindow(QMainWindow):
             table.setItem(row, 4, QTableWidgetItem(assumption.source_name))
             table.setItem(row, 5, QTableWidgetItem(assumption.confidence_level.value))
 
+        layout.addWidget(self._section_header("Assumption Registry"))
+        layout.addWidget(self._subtle_hint("Assumptions are traceable references used by the planning engine."))
         layout.addWidget(table)
         return widget
 
@@ -513,6 +660,8 @@ class MainWindow(QMainWindow):
         notes.setReadOnly(True)
         self.results_notes = notes
         self._update_results_view(self.initial_analysis)
+        layout.addWidget(self._section_header("Planning Results"))
+        layout.addWidget(self._subtle_hint("Review computed metrics, unmet needs, and assumptions trace."))
         layout.addWidget(notes)
         return widget
 
@@ -589,9 +738,11 @@ class MainWindow(QMainWindow):
         output.setPlainText("Select two scenarios and run comparison to view analysis deltas.")
         self.compare_output = output
 
+        layout.addWidget(self._section_header("Comparison Workspace"))
+        layout.addWidget(self._subtle_hint("Compare two scenarios using profile and metric filters."))
         layout.addLayout(selector_row)
         layout.addLayout(kpi_row)
-        layout.addWidget(QLabel("Branch Lineage"))
+        layout.addWidget(self._section_header("Branch Lineage"))
         layout.addWidget(lineage_tree)
         layout.addLayout(tree_actions)
         layout.addWidget(output)
@@ -893,6 +1044,7 @@ class MainWindow(QMainWindow):
             self.latitude_input.setValue(profile.latitude)
         if self.longitude_input is not None:
             self.longitude_input.setValue(profile.longitude)
+        self._refresh_validation_banner()
         self.statusBar().showMessage(
             f"Applied regional profile: {country} / {region}"
         )
@@ -988,6 +1140,7 @@ class MainWindow(QMainWindow):
         scenario = self.scenario_repository.save_scenario(build_default_scenario())
         self.active_scenario = scenario
         self._populate_editor_from_scenario(scenario)
+        self._refresh_validation_banner()
         self._refresh_scenario_list(selected_scenario_id=scenario.scenario_id)
         self.statusBar().showMessage(f"Created new scenario: {scenario.name}")
         self._run_analysis()
@@ -1064,20 +1217,34 @@ class MainWindow(QMainWindow):
             return
 
         scenario = self._build_scenario_from_editor()
-        if scenario.population_profile.displaced_population > scenario.population_profile.total_population:
+        issues = self._validate_scenario(scenario)
+        self._set_validation_issues(issues)
+        if issues:
             QMessageBox.warning(
                 self,
-                "Invalid Population",
-                "Displaced population cannot exceed total affected population.",
+                "Validation Required",
+                issues[0],
             )
             return
 
         self.active_scenario = self.scenario_repository.save_scenario(scenario)
+        if self.change_preview is not None:
+            self.change_preview.setPlainText("No pending differences from saved scenario.")
         self._refresh_scenario_list(selected_scenario_id=self.active_scenario.scenario_id)
         self.statusBar().showMessage(f"Saved scenario: {self.active_scenario.name}")
 
     def _run_analysis(self) -> None:
-        self.active_scenario = self._build_scenario_from_editor()
+        scenario = self._build_scenario_from_editor()
+        issues = self._validate_scenario(scenario)
+        self._set_validation_issues(issues)
+        if issues:
+            QMessageBox.warning(
+                self,
+                "Validation Required",
+                issues[0],
+            )
+            return
+        self.active_scenario = scenario
         self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
@@ -1100,9 +1267,72 @@ class MainWindow(QMainWindow):
         self.active_scenario = scenario
         self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
         self._populate_editor_from_scenario(self.active_scenario)
+        self._refresh_validation_banner()
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
         self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
+
+    def _validate_scenario(self, scenario: Scenario) -> list[str]:
+        issues: list[str] = []
+        if scenario.population_profile.total_population <= 0:
+            issues.append("Total population must be greater than zero.")
+        if scenario.population_profile.displaced_population > scenario.population_profile.total_population:
+            issues.append("Displaced population cannot exceed total population.")
+        if scenario.country is None or scenario.region is None:
+            issues.append("Select both country and region for location-aware assumptions.")
+        if scenario.hazard_profile.duration_days <= 0:
+            issues.append("Duration must be at least one day.")
+        return issues
+
+    def _set_validation_issues(self, issues: list[str]) -> None:
+        if self.validation_banner is None:
+            return
+        if issues:
+            self.validation_banner.setText("Validation checks: " + " | ".join(issues))
+            self.validation_banner.show()
+        else:
+            self.validation_banner.hide()
+
+    def _refresh_validation_banner(self) -> None:
+        scenario = self._build_scenario_from_editor()
+        self._set_validation_issues(self._validate_scenario(scenario))
+
+    def _preview_changes(self) -> None:
+        if self.change_preview is None:
+            return
+        draft = self._build_scenario_from_editor()
+        self._set_validation_issues(self._validate_scenario(draft))
+        lines: list[str] = ["Pending changes vs active scenario:"]
+
+        def add_change(label: str, old: object, new: object) -> None:
+            if old != new:
+                lines.append(f"- {label}: {old} -> {new}")
+
+        add_change("Name", self.active_scenario.name, draft.name)
+        add_change("Country", self.active_scenario.country, draft.country)
+        add_change("Region", self.active_scenario.region, draft.region)
+        add_change("Latitude", self.active_scenario.latitude, draft.latitude)
+        add_change("Longitude", self.active_scenario.longitude, draft.longitude)
+        add_change("Hazard", self.active_scenario.hazard_profile.hazard_type.value, draft.hazard_profile.hazard_type.value)
+        add_change("Severity", self.active_scenario.hazard_profile.severity_band, draft.hazard_profile.severity_band)
+        add_change("Duration days", self.active_scenario.hazard_profile.duration_days, draft.hazard_profile.duration_days)
+        add_change(
+            "Displaced population",
+            self.active_scenario.population_profile.displaced_population,
+            draft.population_profile.displaced_population,
+        )
+        add_change(
+            "Infrastructure damage %",
+            self.active_scenario.hazard_profile.infrastructure_damage_percent,
+            draft.hazard_profile.infrastructure_damage_percent,
+        )
+        add_change("Resource rows", len(self.active_scenario.resources), len(draft.resources))
+        add_change("Personnel rows", len(self.active_scenario.personnel), len(draft.personnel))
+        add_change("Transport rows", len(self.active_scenario.transportation), len(draft.transportation))
+
+        if len(lines) == 1:
+            lines.append("- No pending changes.")
+        self.change_preview.setPlainText("\n".join(lines))
 
     def _open_compare_tab(self) -> None:
         if self.workspace_tabs is None or self.compare_tab_index is None:
