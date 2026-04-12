@@ -7,6 +7,7 @@ from PySide6.QtGui import QAction, QFont
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
+    QCompleter,
     QDockWidget,
     QDoubleSpinBox,
     QFormLayout,
@@ -498,6 +499,9 @@ class MainWindow(QMainWindow):
         self.world_region_combo = QComboBox()
         self.country_combo = QComboBox()
         self.region_combo = QComboBox()
+        self._enable_combo_search(self.world_region_combo)
+        self._enable_combo_search(self.country_combo)
+        self._enable_combo_search(self.region_combo)
         self.world_region_combo.addItems(list_world_regions())
         self.world_region_combo.currentIndexChanged.connect(self._on_world_region_changed)
         self.country_combo.currentIndexChanged.connect(self._on_country_changed)
@@ -1149,6 +1153,18 @@ class MainWindow(QMainWindow):
             return None
         value = self.world_region_combo.currentText().strip()
         return value or None
+
+    def _enable_combo_search(self, combo: QComboBox) -> None:
+        combo.setEditable(True)
+        combo.setInsertPolicy(QComboBox.NoInsert)
+        combo.setMaxVisibleItems(15)
+        completer = combo.completer()
+        if completer is None:
+            completer = QCompleter(combo.model(), combo)
+            combo.setCompleter(completer)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        completer.setCompletionMode(QCompleter.PopupCompletion)
 
     def _sync_countries_for_world_region(self, world_region: str) -> None:
         if self.country_combo is None:

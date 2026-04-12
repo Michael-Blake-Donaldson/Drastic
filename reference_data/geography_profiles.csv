@@ -1,0 +1,74 @@
+world_region,country,region,latitude,longitude,infrastructure_damage_percent,road_access_score,health_operability_score,local_water_liters_per_day,local_food_supply_ratio
+North America,United States,Gulf Coast,29.7604,-95.3698,35.0,0.72,0.82,34000.0,0.32
+North America,United States,California,34.0522,-118.2437,33.0,0.77,0.82,34000.0,0.32
+North America,Canada,British Columbia,49.2827,-123.1207,28.0,0.76,0.86,34000.0,0.32
+North America,Canada,Quebec,45.5017,-73.5673,27.0,0.78,0.82,34000.0,0.32
+North America,Mexico,Yucatan,20.9674,-89.5926,36.0,0.7,0.82,30000.0,0.32
+North America,Mexico,Oaxaca,17.0732,-96.7266,37.0,0.68,0.7699999999999999,34000.0,0.32
+Latin America,Brazil,Sao Paulo,-23.5505,-46.6333,33.0,0.7100000000000001,0.71,23000.0,0.24
+Latin America,Brazil,Pernambuco,-8.0476,-34.877,39.0,0.62,0.71,23000.0,0.24
+Latin America,Argentina,Buenos Aires Province,-34.6037,-58.3816,33.0,0.66,0.73,23000.0,0.24
+Latin America,Chile,Valparaiso,-33.0472,-71.6127,34.0,0.6900000000000001,0.71,23000.0,0.24
+Latin America,Colombia,Antioquia,6.2442,-75.5812,37.0,0.64,0.71,23000.0,0.24
+Latin America,Peru,Lima Region,-12.0464,-77.0428,36.0,0.66,0.71,21000.0,0.24
+Europe,United Kingdom,England,51.5072,-0.1276,20.0,0.83,0.91,30000.0,0.39
+Europe,France,Ile-de-France,48.8566,2.3522,20.0,0.86,0.88,30000.0,0.39
+Europe,Germany,Bavaria,48.1351,11.582,19.0,0.83,0.92,30000.0,0.39
+Europe,Italy,Sicily,38.1157,13.3615,25.0,0.8099999999999999,0.88,30000.0,0.39
+Europe,Spain,Andalusia,37.3891,-5.9845,24.0,0.83,0.88,27000.0,0.39
+Europe,Ukraine,Kyiv Oblast,50.4501,30.5234,31.0,0.73,0.8,30000.0,0.39
+Middle East,Turkey,Southeastern Anatolia,37.0662,37.3833,43.0,0.57,0.63,17000.0,0.18
+Middle East,Saudi Arabia,Riyadh Province,24.7136,46.6753,38.0,0.59,0.63,12000.0,0.18
+Middle East,Jordan,Amman Governorate,31.9454,35.9284,39.0,0.59,0.63,12500.0,0.18
+Middle East,Iraq,Baghdad Governorate,33.3152,44.3661,47.0,0.47,0.53,17000.0,0.18
+Middle East,Lebanon,Mount Lebanon,33.8938,35.5018,42.0,0.5499999999999999,0.63,17000.0,0.18
+Middle East,Yemen,Aden Governorate,12.7855,45.0187,51.0,0.41,0.47,17000.0,0.18
+North Africa,Egypt,Cairo Governorate,30.0444,31.2357,38.0,0.61,0.64,18000.0,0.19
+North Africa,Morocco,Casablanca-Settat,33.5731,-7.5898,36.0,0.62,0.64,18000.0,0.19
+North Africa,Algeria,Algiers Province,36.7538,3.0588,37.0,0.6,0.64,18000.0,0.19
+North Africa,Tunisia,Tunis Governorate,36.8065,10.1815,36.0,0.62,0.64,18000.0,0.19
+North Africa,Libya,Tripoli District,32.8872,13.1913,44.0,0.49,0.54,18000.0,0.19
+West Africa,Nigeria,Lagos State,6.5244,3.3792,40.0,0.56,0.59,16000.0,0.17
+West Africa,Ghana,Greater Accra,5.6037,-0.187,38.0,0.5700000000000001,0.59,16000.0,0.17
+West Africa,Senegal,Dakar Region,14.7167,-17.4677,37.0,0.55,0.59,16000.0,0.17
+West Africa,Cote d'Ivoire,Abidjan Autonomous District,5.36,-4.0083,39.0,0.55,0.59,16000.0,0.17
+West Africa,Mali,Bamako District,12.6392,-8.0029,45.0,0.43000000000000005,0.49,16000.0,0.17
+West Africa,Niger,Niamey Region,13.5116,2.1254,46.0,0.42000000000000004,0.59,13000.0,0.17
+East Africa,Kenya,Nairobi County,-1.2864,36.8172,34.0,0.6399999999999999,0.62,17500.0,0.19
+East Africa,Ethiopia,Addis Ababa,8.9806,38.7578,37.0,0.58,0.62,17500.0,0.19
+East Africa,Tanzania,Dar es Salaam,-6.7924,39.2083,38.0,0.57,0.62,17500.0,0.19
+East Africa,Uganda,Central Region,0.3476,32.5825,37.0,0.58,0.62,17500.0,0.19
+East Africa,Rwanda,Kigali City,-1.9441,30.0619,35.0,0.61,0.62,17500.0,0.19
+East Africa,Somalia,Banadir,2.0469,45.3182,47.0,0.37999999999999995,0.44,17500.0,0.19
+Southern Africa,South Africa,Gauteng,-26.2041,28.0473,33.0,0.67,0.67,21000.0,0.22
+Southern Africa,South Africa,Western Cape,-33.9249,18.4241,32.0,0.66,0.67,21000.0,0.22
+Southern Africa,Botswana,South-East District,-24.6282,25.9231,31.0,0.62,0.67,21000.0,0.22
+Southern Africa,Zimbabwe,Harare Province,-17.8292,31.0522,36.0,0.58,0.67,21000.0,0.22
+Southern Africa,Mozambique,Sofala,-19.8349,34.8389,41.0,0.52,0.67,21000.0,0.22
+South Asia,India,Maharashtra,19.076,72.8777,40.0,0.6000000000000001,0.6,16500.0,0.16
+South Asia,India,West Bengal,22.5726,88.3639,44.0,0.53,0.6,16500.0,0.16
+South Asia,Pakistan,Sindh,24.8607,67.0011,45.0,0.51,0.6,16500.0,0.16
+South Asia,Bangladesh,Dhaka Division,23.8103,90.4125,47.0,0.49000000000000005,0.6,16500.0,0.16
+South Asia,Sri Lanka,Western Province,6.9271,79.8612,41.0,0.5700000000000001,0.6,16500.0,0.16
+South Asia,Nepal,Bagmati Province,27.7172,85.324,46.0,0.4600000000000001,0.54,16500.0,0.16
+Southeast Asia,Philippines,Central Luzon,15.4828,120.7134,40.0,0.6,0.64,21000.0,0.2
+Southeast Asia,Indonesia,Jakarta,-6.2088,106.8456,41.0,0.6,0.64,21000.0,0.2
+Southeast Asia,Indonesia,Aceh,5.5483,95.3238,44.0,0.54,0.64,21000.0,0.2
+Southeast Asia,Thailand,Bangkok Metropolitan,13.7563,100.5018,37.0,0.65,0.64,21000.0,0.2
+Southeast Asia,Vietnam,Ho Chi Minh City,10.8231,106.6297,39.0,0.6,0.64,21000.0,0.2
+Southeast Asia,Myanmar,Yangon Region,16.8409,96.1735,44.0,0.53,0.5800000000000001,21000.0,0.2
+East Asia,Japan,Kansai,34.6937,135.5023,26.0,0.81,0.84,29000.0,0.34
+East Asia,Japan,Tohoku,38.2682,140.8694,31.0,0.76,0.84,29000.0,0.34
+East Asia,China,Guangdong,23.1291,113.2644,28.0,0.81,0.84,29000.0,0.34
+East Asia,China,Sichuan,30.5728,104.0668,31.0,0.74,0.84,29000.0,0.34
+East Asia,South Korea,Seoul Capital Area,37.5665,126.978,25.0,0.8200000000000001,0.84,29000.0,0.34
+East Asia,Mongolia,Ulaanbaatar,47.8864,106.9057,30.0,0.78,0.84,26000.0,0.34
+Central Asia,Kazakhstan,Almaty Region,43.2389,76.8897,34.0,0.6,0.63,18000.0,0.2
+Central Asia,Uzbekistan,Tashkent Region,41.2995,69.2401,35.0,0.58,0.63,18000.0,0.2
+Central Asia,Kyrgyzstan,Chuy Region,42.8746,74.5698,37.0,0.52,0.63,18000.0,0.2
+Central Asia,Tajikistan,Dushanbe,38.5598,68.787,38.0,0.49999999999999994,0.63,18000.0,0.2
+Oceania,Australia,New South Wales,-33.8688,151.2093,24.0,0.8300000000000001,0.86,31000.0,0.36
+Oceania,Australia,Queensland,-27.4698,153.0251,28.0,0.8,0.86,31000.0,0.36
+Oceania,New Zealand,Auckland Region,-36.8485,174.7633,23.0,0.8,0.89,31000.0,0.36
+Oceania,Papua New Guinea,National Capital District,-9.4438,147.1803,35.0,0.67,0.86,31000.0,0.36
+Oceania,Fiji,Central Division,-18.1248,178.4501,31.0,0.74,0.86,31000.0,0.36
