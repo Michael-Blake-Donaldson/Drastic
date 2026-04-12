@@ -54,6 +54,7 @@ from domain.models import HazardProfile, InfrastructureProfile, PopulationProfil
 from reference_data.geography import (
     format_location_label,
     geography_csv_path,
+    geography_csv_schema_help_text,
     get_region_profile,
     get_world_region_for_country,
     list_countries_for_world_region,
@@ -423,6 +424,18 @@ class MainWindow(QMainWindow):
         import_geo_action.setStatusTip("Import an external geography CSV and reload location catalog")
         import_geo_action.triggered.connect(self._import_geography_catalog)
         toolbar.addAction(import_geo_action)
+
+        geo_schema_action = QAction("Geography CSV Help", self)
+        geo_schema_action.setStatusTip("Show required columns and sample row for geography CSV")
+        geo_schema_action.triggered.connect(self._show_geography_csv_help)
+        toolbar.addAction(geo_schema_action)
+
+    def _show_geography_csv_help(self) -> None:
+        QMessageBox.information(
+            self,
+            "Geography CSV Help",
+            geography_csv_schema_help_text(),
+        )
 
     def _import_geography_catalog(self) -> None:
         selected_path, _ = QFileDialog.getOpenFileName(

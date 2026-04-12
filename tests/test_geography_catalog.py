@@ -6,7 +6,9 @@ import unittest
 
 from reference_data.geography import (
     geography_csv_path,
+    geography_csv_schema_help_text,
     list_world_regions,
+    REQUIRED_COLUMNS,
     reload_region_profiles,
     validate_geography_csv,
 )
@@ -43,6 +45,13 @@ class GeographyCatalogTests(unittest.TestCase):
                 encoding="utf-8",
             )
             self.assertEqual(validate_geography_csv(csv_path), [])
+
+    def test_schema_help_text_includes_columns_and_example(self) -> None:
+        help_text = geography_csv_schema_help_text()
+        self.assertIn("Required header columns", help_text)
+        self.assertIn("Example row", help_text)
+        for column in REQUIRED_COLUMNS:
+            self.assertIn(column, help_text)
 
 
 if __name__ == "__main__":

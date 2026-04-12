@@ -32,6 +32,19 @@ REQUIRED_COLUMNS: tuple[str, ...] = (
     "local_food_supply_ratio",
 )
 
+SAMPLE_ROW: tuple[str, ...] = (
+    "Europe",
+    "France",
+    "Ile-de-France",
+    "48.8566",
+    "2.3522",
+    "24.0",
+    "0.83",
+    "0.88",
+    "30000",
+    "0.39",
+)
+
 
 def geography_csv_path() -> Path:
     return Path(__file__).with_name("geography_profiles.csv")
@@ -70,6 +83,25 @@ def validate_geography_csv(csv_path: Path | None = None) -> list[str]:
                     )
 
     return errors
+
+
+def geography_csv_schema_help_text() -> str:
+    columns_line = ",".join(REQUIRED_COLUMNS)
+    sample_line = ",".join(SAMPLE_ROW)
+    return (
+        "Geography CSV Requirements\n"
+        "\n"
+        "Required header columns (exact order recommended):\n"
+        f"{columns_line}\n"
+        "\n"
+        "Example row:\n"
+        f"{sample_line}\n"
+        "\n"
+        "Notes:\n"
+        "- world_region, country, and region must be non-empty text.\n"
+        "- latitude and longitude must be numeric decimal values.\n"
+        "- planning profile fields must be numeric."
+    )
 
 
 def _load_region_profiles() -> tuple[RegionProfile, ...]:
