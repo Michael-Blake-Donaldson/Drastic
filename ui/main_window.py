@@ -50,12 +50,15 @@ from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
 from reference_data.geography import (
     format_location_label,
+    geography_csv_path,
     get_region_profile,
     get_world_region_for_country,
     list_countries_for_world_region,
     list_world_regions,
     list_regions,
     parse_location_label,
+    reload_region_profiles,
+    validate_geography_csv,
 )
 from services.report_export import write_text_report
 from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
@@ -407,6 +410,59 @@ class MainWindow(QMainWindow):
         export_action.setStatusTip("Export the active scenario package")
         export_action.triggered.connect(self._export_active_report)
         toolbar.addAction(export_action)
+
+        reload_geo_action = QAction("Reload Geography", self)
+        reload_geo_action.setStatusTip("Validate and reload location catalog from CSV")
+        reload_geo_action.triggered.connect(self._reload_geography_catalog)
+        toolbar.addAction(reload_geo_action)
+
+    def _reload_geography_catalog(self) -> None:
+        errors = validate_geography_csv()
+        if errors:
+            preview = "\n".join(errors[:8])
+            QMessageBox.warning(
+                self,
+                "Geography CSV Validation",
+                f"Geography catalog has validation issues:\n{preview}",
+            )
+            return
+
+        old_world_region = self._selected_world_region()
+        old_country = self._selected_country()
+        old_region = self._selected_region()
+
+        loaded_count = reload_region_profiles()
+
+        if self.world_region_combo is not None:
+            self.world_region_combo.blockSignals(True)
+            self.world_region_combo.clear()
+            self.world_region_combo.addItems(list_world_regions())
+            self.world_region_combo.blockSignals(False)
+
+        if old_world_region and self.world_region_combo is not None:
+            world_index = self.world_region_combo.findText(old_world_region)
+            if world_index >= 0:
+                self.world_region_combo.setCurrentIndex(world_index)
+
+        selected_world_region = self._selected_world_region()
+        if selected_world_region:
+            self._sync_countries_for_world_region(selected_world_region)
+
+        if old_country and self.country_combo is not None:
+            country_index = self.country_combo.findText(old_country)
+            if country_index >= 0:
+                self.country_combo.setCurrentIndex(country_index)
+                self._sync_regions_for_country(old_country)
+
+        if old_region and self.region_combo is not None:
+            region_index = self.region_combo.findText(old_region)
+            if region_index >= 0:
+                self.region_combo.setCurrentIndex(region_index)
+
+        self._on_region_changed()
+        self.statusBar().showMessage(
+            f"Reloaded geography catalog ({loaded_count} region profiles) from {geography_csv_path().name}"
+        )
 
     def _build_left_navigation(self) -> None:
         navigation_dock = QDockWidget("Scenarios", self)

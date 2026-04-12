@@ -19,8 +19,61 @@ class RegionProfile:
     local_food_supply_ratio: float
 
 
+REQUIRED_COLUMNS: tuple[str, ...] = (
+    "world_region",
+    "country",
+    "region",
+    "latitude",
+    "longitude",
+    "infrastructure_damage_percent",
+    "road_access_score",
+    "health_operability_score",
+    "local_water_liters_per_day",
+    "local_food_supply_ratio",
+)
+
+
+def geography_csv_path() -> Path:
+    return Path(__file__).with_name("geography_profiles.csv")
+
+
+def validate_geography_csv(csv_path: Path | None = None) -> list[str]:
+    path = csv_path or geography_csv_path()
+    if not path.exists():
+        return [f"Missing geography CSV file: {path}"]
+
+    errors: list[str] = []
+    with path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        if reader.fieldnames is None:
+            return ["Geography CSV is empty or missing a header row."]
+
+        missing_columns = [column for column in REQUIRED_COLUMNS if column not in reader.fieldnames]
+        if missing_columns:
+            errors.append(
+                "Missing required columns: " + ", ".join(missing_columns)
+            )
+            return errors
+
+        for line_number, row in enumerate(reader, start=2):
+            for column in ("world_region", "country", "region"):
+                if not (row.get(column) or "").strip():
+                    errors.append(f"Line {line_number}: '{column}' cannot be empty.")
+
+            for numeric_column in REQUIRED_COLUMNS[3:]:
+                value = (row.get(numeric_column) or "").strip()
+                try:
+                    float(value)
+                except ValueError:
+                    errors.append(
+                        f"Line {line_number}: '{numeric_column}' must be numeric (got '{value}')."
+                    )
+
+    return errors
+
+
 def _load_region_profiles() -> tuple[RegionProfile, ...]:
-    csv_path = Path(__file__).with_name("geography_profiles.csv")
+    csv_path = geography_csv_path()
     if not csv_path.exists():
         return ()
 
@@ -28,26 +81,37 @@ def _load_region_profiles() -> tuple[RegionProfile, ...]:
     with csv_path.open("r", encoding="utf-8", newline="") as handle:
         reader = csv.DictReader(handle)
         for row in reader:
+            try:
+                latitude = float(row.get("latitude") or 0.0)
+                longitude = float(row.get("longitude") or 0.0)
+                infrastructure_damage_percent = float(
+                    row.get("infrastructure_damage_percent") or 0.0
+                )
+                road_access_score = float(row.get("road_access_score") or 0.0)
+                health_operability_score = float(
+                    row.get("health_operability_score") or 0.0
+                )
+                local_water_liters_per_day = float(
+                    row.get("local_water_liters_per_day") or 0.0
+                )
+                local_food_supply_ratio = float(
+                    row.get("local_food_supply_ratio") or 0.0
+                )
+            except ValueError:
+                continue
+
             profiles.append(
                 RegionProfile(
                     world_region=(row.get("world_region") or "").strip(),
                     country=(row.get("country") or "").strip(),
                     region=(row.get("region") or "").strip(),
-                    latitude=float(row.get("latitude") or 0.0),
-                    longitude=float(row.get("longitude") or 0.0),
-                    infrastructure_damage_percent=float(
-                        row.get("infrastructure_damage_percent") or 0.0
-                    ),
-                    road_access_score=float(row.get("road_access_score") or 0.0),
-                    health_operability_score=float(
-                        row.get("health_operability_score") or 0.0
-                    ),
-                    local_water_liters_per_day=float(
-                        row.get("local_water_liters_per_day") or 0.0
-                    ),
-                    local_food_supply_ratio=float(
-                        row.get("local_food_supply_ratio") or 0.0
-                    ),
+                    latitude=latitude,
+                    longitude=longitude,
+                    infrastructure_damage_percent=infrastructure_damage_percent,
+                    road_access_score=road_access_score,
+                    health_operability_score=health_operability_score,
+                    local_water_liters_per_day=local_water_liters_per_day,
+                    local_food_supply_ratio=local_food_supply_ratio,
                 )
             )
 
@@ -78,6 +142,12 @@ def _load_region_profiles() -> tuple[RegionProfile, ...]:
 
 
 _REGION_PROFILES: tuple[RegionProfile, ...] = _load_region_profiles()
+
+
+def reload_region_profiles() -> int:
+    global _REGION_PROFILES
+    _REGION_PROFILES = _load_region_profiles()
+    return len(_REGION_PROFILES)
 
 
 def list_world_regions() -> tuple[str, ...]:
