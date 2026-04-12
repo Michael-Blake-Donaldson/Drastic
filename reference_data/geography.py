@@ -85,6 +85,40 @@ def validate_geography_csv(csv_path: Path | None = None) -> list[str]:
     return errors
 
 
+def preview_geography_csv(csv_path: Path, max_rows: int = 10) -> dict[str, object]:
+    sample_rows: list[str] = []
+    world_regions: set[str] = set()
+    countries: set[str] = set()
+    total_rows = 0
+
+    with csv_path.open("r", encoding="utf-8", newline="") as handle:
+        reader = csv.DictReader(handle)
+        for row in reader:
+            world_region = (row.get("world_region") or "").strip()
+            country = (row.get("country") or "").strip()
+            region = (row.get("region") or "").strip()
+            latitude = (row.get("latitude") or "").strip()
+            longitude = (row.get("longitude") or "").strip()
+
+            if world_region:
+                world_regions.add(world_region)
+            if country:
+                countries.add(country)
+
+            total_rows += 1
+            if len(sample_rows) < max_rows:
+                sample_rows.append(
+                    f"- {world_region} | {country} | {region} ({latitude}, {longitude})"
+                )
+
+    return {
+        "total_rows": total_rows,
+        "world_regions": tuple(sorted(world_regions)),
+        "countries": tuple(sorted(countries)),
+        "sample_rows": tuple(sample_rows),
+    }
+
+
 def geography_csv_schema_help_text() -> str:
     columns_line = ",".join(REQUIRED_COLUMNS)
     sample_line = ",".join(SAMPLE_ROW)

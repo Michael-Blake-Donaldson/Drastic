@@ -8,6 +8,7 @@ from reference_data.geography import (
     geography_csv_path,
     geography_csv_schema_help_text,
     list_world_regions,
+    preview_geography_csv,
     REQUIRED_COLUMNS,
     reload_region_profiles,
     validate_geography_csv,
@@ -52,6 +53,25 @@ class GeographyCatalogTests(unittest.TestCase):
         self.assertIn("Example row", help_text)
         for column in REQUIRED_COLUMNS:
             self.assertIn(column, help_text)
+
+    def test_preview_geography_csv_returns_counts_and_samples(self) -> None:
+        with TemporaryDirectory() as temp_dir:
+            csv_path = Path(temp_dir) / "preview.csv"
+            csv_path.write_text(
+                "\n".join(
+                    [
+                        "world_region,country,region,latitude,longitude,infrastructure_damage_percent,road_access_score,health_operability_score,local_water_liters_per_day,local_food_supply_ratio",
+                        "Europe,France,Ile-de-France,48.8566,2.3522,20,0.86,0.88,30000,0.39",
+                        "Europe,Germany,Bavaria,48.1351,11.5820,19,0.83,0.92,30000,0.39",
+                    ]
+                ),
+                encoding="utf-8",
+            )
+            preview = preview_geography_csv(csv_path, max_rows=1)
+            self.assertEqual(preview["total_rows"], 2)
+            self.assertEqual(preview["world_regions"], ("Europe",))
+            self.assertEqual(len(preview["countries"]), 2)
+            self.assertEqual(len(preview["sample_rows"]), 1)
 
 
 if __name__ == "__main__":

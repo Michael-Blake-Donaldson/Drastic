@@ -60,6 +60,7 @@ from reference_data.geography import (
     list_countries_for_world_region,
     list_world_regions,
     list_regions,
+    preview_geography_csv,
     parse_location_label,
     reload_region_profiles,
     validate_geography_csv,
@@ -460,6 +461,27 @@ class MainWindow(QMainWindow):
                 "Geography CSV Validation",
                 f"Cannot import this file due to validation issues:\n{preview}",
             )
+            return
+
+        preview_data = preview_geography_csv(source_path)
+        preview_lines = [
+            f"File: {source_path.name}",
+            f"Rows: {preview_data['total_rows']}",
+            f"World regions: {len(preview_data['world_regions'])}",
+            f"Countries: {len(preview_data['countries'])}",
+            "",
+            "Sample rows:",
+        ]
+        preview_lines.extend(preview_data["sample_rows"])
+
+        confirm = QMessageBox.question(
+            self,
+            "Confirm Geography Import",
+            "\n".join(preview_lines),
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
             return
 
         target_path = geography_csv_path()
