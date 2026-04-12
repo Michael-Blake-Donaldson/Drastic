@@ -45,6 +45,7 @@ from persistence.repositories import ScenarioRepository
 from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
 from services.report_export import write_text_report
+from services.report_templates import build_comparison_report, build_scenario_report
 from services.scenario_factory import build_default_scenario
 
 
@@ -92,6 +93,7 @@ class MainWindow(QMainWindow):
         self.workspace_tabs: QTabWidget | None = None
         self.compare_left_combo: QComboBox | None = None
         self.compare_right_combo: QComboBox | None = None
+        self.comparison_profile_combo: QComboBox | None = None
         self.compare_output: QTextEdit | None = None
         self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
@@ -103,6 +105,7 @@ class MainWindow(QMainWindow):
         self.transport_add_button: QPushButton | None = None
         self.transport_remove_button: QPushButton | None = None
         self.save_button: QPushButton | None = None
+        self.last_comparison_payload: dict[str, object] | None = None
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -429,8 +432,11 @@ class MainWindow(QMainWindow):
         selector_row = QHBoxLayout()
         self.compare_left_combo = QComboBox()
         self.compare_right_combo = QComboBox()
+        self.comparison_profile_combo = QComboBox()
+        self.comparison_profile_combo.addItems(["Balanced", "Coverage First", "Cost First"])
         self.compare_left_combo.currentIndexChanged.connect(self._run_comparison)
         self.compare_right_combo.currentIndexChanged.connect(self._run_comparison)
+        self.comparison_profile_combo.currentIndexChanged.connect(self._run_comparison)
         run_compare_button = QPushButton("Run Comparison")
         run_compare_button.clicked.connect(self._run_comparison)
         swap_button = QPushButton("Swap")
@@ -438,13 +444,25 @@ class MainWindow(QMainWindow):
         export_compare_button = QPushButton("Export Comparison")
         export_compare_button.clicked.connect(self._export_comparison_report)
 
+        branch_selected_button = QPushButton("Branch Selected")
+        branch_selected_button.clicked.connect(self._branch_selected_tree_node)
+        compare_selected_button = QPushButton("Compare Selected vs Active")
+        compare_selected_button.clicked.connect(self._compare_selected_with_active)
+
         selector_row.addWidget(QLabel("Scenario A"))
         selector_row.addWidget(self.compare_left_combo)
         selector_row.addWidget(QLabel("Scenario B"))
         selector_row.addWidget(self.compare_right_combo)
+        selector_row.addWidget(QLabel("Profile"))
+        selector_row.addWidget(self.comparison_profile_combo)
         selector_row.addWidget(swap_button)
         selector_row.addWidget(run_compare_button)
         selector_row.addWidget(export_compare_button)
+
+        tree_actions = QHBoxLayout()
+        tree_actions.addWidget(branch_selected_button)
+        tree_actions.addWidget(compare_selected_button)
+        tree_actions.addStretch(1)
 
         lineage_tree = QTreeWidget()
         lineage_tree.setHeaderLabels(["Scenario Branch Tree"])
@@ -458,6 +476,7 @@ class MainWindow(QMainWindow):
         layout.addLayout(selector_row)
         layout.addWidget(QLabel("Branch Lineage"))
         layout.addWidget(lineage_tree)
+        layout.addLayout(tree_actions)
         layout.addWidget(output)
         self._refresh_lineage_tree()
         return widget
@@ -866,6 +885,7 @@ class MainWindow(QMainWindow):
     def _run_comparison(self) -> None:
         if self.compare_left_combo is None or self.compare_right_combo is None or self.compare_output is None:
             return
+        profile = self.comparison_profile_combo.currentText() if self.comparison_profile_combo else "Balanced"
 
         left_id = self.compare_left_combo.currentData()
         right_id = self.compare_right_combo.currentData()
@@ -890,6 +910,7 @@ class MainWindow(QMainWindow):
         lines = [
             f"Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
             f"Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
+            f"Profile: {profile}",
             f"Lineage A: {self._format_lineage(left_lineage)}",
             f"Lineage B: {self._format_lineage(right_lineage)}",
             "",
@@ -898,7 +919,7 @@ class MainWindow(QMainWindow):
             f"- Overall coverage: {right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent:+.1f}%",
             f"- Total estimated cost: ${right_analysis.total_estimated_cost - left_analysis.total_estimated_cost:+,.2f}",
             "",
-            f"Comparison call: {self._comparison_winner(left_analysis, right_analysis)}",
+            f"Comparison call: {self._comparison_winner(left_analysis, right_analysis, profile)}",
             "",
             "Detailed metric deltas:",
         ]
@@ -924,6 +945,16 @@ class MainWindow(QMainWindow):
         else:
             lines.append("- None")
 
+        self.last_comparison_payload = {
+            "left_scenario": left_scenario,
+            "right_scenario": right_scenario,
+            "left_analysis": left_analysis,
+            "right_analysis": right_analysis,
+            "profile": profile,
+            "winner": self._comparison_winner(left_analysis, right_analysis, profile),
+            "lineage_left": self._format_lineage(left_lineage),
+            "lineage_right": self._format_lineage(right_lineage),
+        }
         self.compare_output.setPlainText("\n".join(lines))
 
     def _swap_comparison_selection(self) -> None:
@@ -940,12 +971,75 @@ class MainWindow(QMainWindow):
             return "Unknown"
         return " -> ".join(f"{entry.name} [{entry.variant_label}]" for entry in lineage)
 
-    def _comparison_winner(self, left: AnalysisSummary, right: AnalysisSummary) -> str:
-        left_score = (left.critical_coverage_percent * 2.0) + left.overall_coverage_percent - (left.total_estimated_cost / 10000)
-        right_score = (right.critical_coverage_percent * 2.0) + right.overall_coverage_percent - (right.total_estimated_cost / 10000)
+    def _comparison_winner(self, left: AnalysisSummary, right: AnalysisSummary, profile: str) -> str:
+        if profile == "Coverage First":
+            critical_weight = 3.0
+            overall_weight = 1.5
+            cost_weight = 1 / 20000
+        elif profile == "Cost First":
+            critical_weight = 1.5
+            overall_weight = 1.0
+            cost_weight = 1 / 5000
+        else:
+            critical_weight = 2.0
+            overall_weight = 1.0
+            cost_weight = 1 / 10000
+
+        left_score = (left.critical_coverage_percent * critical_weight) + (left.overall_coverage_percent * overall_weight) - (left.total_estimated_cost * cost_weight)
+        right_score = (right.critical_coverage_percent * critical_weight) + (right.overall_coverage_percent * overall_weight) - (right.total_estimated_cost * cost_weight)
         if abs(left_score - right_score) < 0.01:
             return "Equivalent planning score across selected metrics."
         return "Scenario B leads selected metrics." if right_score > left_score else "Scenario A leads selected metrics."
+
+    def _branch_selected_tree_node(self) -> None:
+        selected_id = self._selected_tree_scenario_id()
+        if selected_id is None:
+            QMessageBox.information(self, "Branch Variant", "Select a scenario node in the branch tree first.")
+            return
+
+        variant_label, ok = QInputDialog.getText(self, "Branch Selected", "Variant label:", text="branch")
+        if not ok:
+            return
+        variant_label = variant_label.strip()
+        if not variant_label:
+            QMessageBox.warning(self, "Invalid Variant Label", "Variant label cannot be empty.")
+            return
+
+        variant = self.scenario_repository.branch_variant(selected_id, variant_label)
+        if variant is None:
+            QMessageBox.warning(self, "Branch Error", "Unable to branch selected scenario.")
+            return
+
+        self.active_scenario = variant
+        self._populate_editor_from_scenario(variant)
+        self._refresh_scenario_list(selected_scenario_id=variant.scenario_id)
+        self.statusBar().showMessage(f"Branched from tree: {variant.name}")
+        self._run_analysis()
+
+    def _compare_selected_with_active(self) -> None:
+        selected_id = self._selected_tree_scenario_id()
+        if selected_id is None:
+            QMessageBox.information(self, "Compare", "Select a scenario node in the branch tree first.")
+            return
+        if self.compare_left_combo is None or self.compare_right_combo is None:
+            return
+
+        left_index = self.compare_left_combo.findData(self.active_scenario.scenario_id)
+        right_index = self.compare_right_combo.findData(selected_id)
+        if left_index >= 0:
+            self.compare_left_combo.setCurrentIndex(left_index)
+        if right_index >= 0:
+            self.compare_right_combo.setCurrentIndex(right_index)
+        self._run_comparison()
+
+    def _selected_tree_scenario_id(self) -> str | None:
+        if self.lineage_tree is None:
+            return None
+        item = self.lineage_tree.currentItem()
+        if item is None:
+            return None
+        value = item.data(0, Qt.UserRole)
+        return value if isinstance(value, str) else None
 
     def _is_locked_baseline(self, scenario: Scenario) -> bool:
         return (
@@ -1012,48 +1106,34 @@ class MainWindow(QMainWindow):
 
     def _export_active_report(self) -> None:
         analysis = self.planning_engine.analyze(self.active_scenario)
-        lines = [
-            f"Scenario: {self.active_scenario.name}",
-            f"Variant: {self.active_scenario.variant_label}",
-            f"Status: {self.active_scenario.status.value}",
-            f"Hazard: {self.active_scenario.hazard_profile.hazard_type.value}",
-            f"Location: {self.active_scenario.hazard_profile.location_label}",
-            f"Duration days: {self.active_scenario.hazard_profile.duration_days}",
-            "",
-            f"Critical coverage: {analysis.critical_coverage_percent}%",
-            f"Overall coverage: {analysis.overall_coverage_percent}%",
-            f"Estimated total cost: ${analysis.total_estimated_cost:,.2f}",
-            f"Confidence: {analysis.confidence_level.value}",
-            "",
-            "Computed metrics:",
-        ]
-        for key, value in analysis.metadata.items():
-            lines.append(f"- {key}: {value}")
-        lines.append("")
-        lines.append("Unmet critical needs:")
-        if analysis.unmet_critical_needs:
-            lines.extend(f"- {item}" for item in analysis.unmet_critical_needs)
-        else:
-            lines.append("- None")
+        report_text = build_scenario_report(self.active_scenario, analysis)
 
         output_path = write_text_report(
             self.config.export_directory,
             prefix=f"scenario_report_{self.active_scenario.variant_label}",
-            content="\n".join(lines),
+            content=report_text,
         )
         self.statusBar().showMessage(f"Exported scenario report: {output_path}")
 
     def _export_comparison_report(self) -> None:
-        if self.compare_output is None:
+        if self.last_comparison_payload is None:
             return
-        content = self.compare_output.toPlainText().strip()
-        if not content:
-            QMessageBox.information(self, "No Comparison", "Run a comparison before exporting.")
-            return
+
+        payload = self.last_comparison_payload
+        report_text = build_comparison_report(
+            left_scenario=payload["left_scenario"],
+            right_scenario=payload["right_scenario"],
+            left_analysis=payload["left_analysis"],
+            right_analysis=payload["right_analysis"],
+            profile=payload["profile"],
+            winner=payload["winner"],
+            lineage_left=payload["lineage_left"],
+            lineage_right=payload["lineage_right"],
+        )
 
         output_path = write_text_report(
             self.config.export_directory,
             prefix="comparison_report",
-            content=content,
+            content=report_text,
         )
         self.statusBar().showMessage(f"Exported comparison report: {output_path}")
