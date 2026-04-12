@@ -98,6 +98,10 @@ class Scenario:
     transportation: tuple[TransportAsset, ...] = ()
     variant_label: str = "baseline"
     base_scenario_id: str | None = None
+    country: str | None = None
+    region: str | None = None
+    latitude: float | None = None
+    longitude: float | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     notes: str = ""

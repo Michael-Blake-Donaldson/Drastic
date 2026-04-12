@@ -44,6 +44,13 @@ from domain.models import (
 from persistence.repositories import ScenarioRepository
 from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
+from reference_data.geography import (
+    format_location_label,
+    get_region_profile,
+    list_countries,
+    list_regions,
+    parse_location_label,
+)
 from services.report_export import write_text_report
 from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
 from services.scenario_factory import build_default_scenario
@@ -130,7 +137,10 @@ class MainWindow(QMainWindow):
         self.results_notes: QTextEdit | None = None
 
         self.name_input: QLineEdit | None = None
-        self.location_input: QLineEdit | None = None
+        self.country_combo: QComboBox | None = None
+        self.region_combo: QComboBox | None = None
+        self.latitude_input: QDoubleSpinBox | None = None
+        self.longitude_input: QDoubleSpinBox | None = None
         self.notes_input: QTextEdit | None = None
         self.hazard_combo: QComboBox | None = None
         self.severity_input: QLineEdit | None = None
@@ -167,6 +177,7 @@ class MainWindow(QMainWindow):
         self.transport_remove_button: QPushButton | None = None
         self.save_button: QPushButton | None = None
         self.last_comparison_payload: dict[str, object] | None = None
+        self._suppress_geo_autofill = False
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -272,7 +283,18 @@ class MainWindow(QMainWindow):
 
         form = QFormLayout()
         self.name_input = QLineEdit()
-        self.location_input = QLineEdit()
+        self.country_combo = QComboBox()
+        self.region_combo = QComboBox()
+        self.country_combo.addItems(list_countries())
+        self.country_combo.currentIndexChanged.connect(self._on_country_changed)
+        self.region_combo.currentIndexChanged.connect(self._on_region_changed)
+
+        self.latitude_input = QDoubleSpinBox()
+        self.latitude_input.setRange(-90.0, 90.0)
+        self.latitude_input.setDecimals(4)
+        self.longitude_input = QDoubleSpinBox()
+        self.longitude_input.setRange(-180.0, 180.0)
+        self.longitude_input.setDecimals(4)
         self.hazard_combo = QComboBox()
         for hazard in HazardType:
             self.hazard_combo.addItem(hazard.value, hazard)
@@ -315,7 +337,10 @@ class MainWindow(QMainWindow):
         self.editor_inputs.extend(
             [
                 self.name_input,
-                self.location_input,
+                self.country_combo,
+                self.region_combo,
+                self.latitude_input,
+                self.longitude_input,
                 self.hazard_combo,
                 self.severity_input,
                 self.duration_input,
@@ -335,7 +360,10 @@ class MainWindow(QMainWindow):
         )
 
         form.addRow("Scenario Name", self.name_input)
-        form.addRow("Location", self.location_input)
+        form.addRow("Country", self.country_combo)
+        form.addRow("Region/State", self.region_combo)
+        form.addRow("Latitude", self.latitude_input)
+        form.addRow("Longitude", self.longitude_input)
         form.addRow("Hazard", self.hazard_combo)
         form.addRow("Severity Band", self.severity_input)
         form.addRow("Duration (days)", self.duration_input)
@@ -403,6 +431,8 @@ class MainWindow(QMainWindow):
         layout.addWidget(self.transport_table)
         layout.addLayout(transport_controls)
         layout.addWidget(button_row)
+        if self.country_combo.count() > 0:
+            self._sync_regions_for_country(self.country_combo.itemText(0))
         self._populate_editor_from_scenario(self.active_scenario)
         return widget
 
@@ -658,7 +688,9 @@ class MainWindow(QMainWindow):
         if not self.name_input:
             return
         self.name_input.setText(scenario.name)
-        self.location_input.setText(scenario.hazard_profile.location_label)
+        self._suppress_geo_autofill = True
+        self._set_location_from_scenario(scenario)
+        self._suppress_geo_autofill = False
         if self.hazard_combo is not None:
             index = self.hazard_combo.findData(scenario.hazard_profile.hazard_type)
             self.hazard_combo.setCurrentIndex(index)
@@ -742,11 +774,15 @@ class MainWindow(QMainWindow):
         return replace(
             self.active_scenario,
             name=self.name_input.text().strip() or self.active_scenario.name,
+            country=self._selected_country(),
+            region=self._selected_region(),
+            latitude=self.latitude_input.value() if self.latitude_input is not None else None,
+            longitude=self.longitude_input.value() if self.longitude_input is not None else None,
             hazard_profile=HazardProfile(
                 hazard_type=hazard_type,
                 severity_band=self.severity_input.text().strip() or "moderate",
                 duration_days=self.duration_input.value(),
-                location_label=self.location_input.text().strip() or "Unassigned Region",
+                location_label=self._current_location_label(),
                 infrastructure_damage_percent=self.infrastructure_damage_input.value(),
             ),
             population_profile=PopulationProfile(
@@ -768,6 +804,101 @@ class MainWindow(QMainWindow):
             transportation=transportation,
             notes=self.notes_input.toPlainText().strip(),
         )
+
+    def _set_location_from_scenario(self, scenario: Scenario) -> None:
+        if self.country_combo is None or self.region_combo is None:
+            return
+
+        country = scenario.country
+        region = scenario.region
+        if not country or not region:
+            parsed_country, parsed_region = parse_location_label(scenario.hazard_profile.location_label)
+            country = country or parsed_country
+            region = region or parsed_region
+
+        if country is None:
+            country = self.country_combo.itemText(0) if self.country_combo.count() else ""
+        self._sync_regions_for_country(country)
+
+        country_index = self.country_combo.findText(country)
+        if country_index >= 0:
+            self.country_combo.setCurrentIndex(country_index)
+            self._sync_regions_for_country(country)
+
+        if region:
+            region_index = self.region_combo.findText(region)
+            if region_index >= 0:
+                self.region_combo.setCurrentIndex(region_index)
+
+        profile = get_region_profile(self._selected_country(), self._selected_region())
+        if self.latitude_input is not None:
+            if scenario.latitude is not None:
+                self.latitude_input.setValue(scenario.latitude)
+            elif profile is not None:
+                self.latitude_input.setValue(profile.latitude)
+        if self.longitude_input is not None:
+            if scenario.longitude is not None:
+                self.longitude_input.setValue(scenario.longitude)
+            elif profile is not None:
+                self.longitude_input.setValue(profile.longitude)
+
+    def _selected_country(self) -> str | None:
+        if self.country_combo is None:
+            return None
+        value = self.country_combo.currentText().strip()
+        return value or None
+
+    def _selected_region(self) -> str | None:
+        if self.region_combo is None:
+            return None
+        value = self.region_combo.currentText().strip()
+        return value or None
+
+    def _sync_regions_for_country(self, country: str) -> None:
+        if self.region_combo is None:
+            return
+        current_region = self.region_combo.currentText()
+        self.region_combo.blockSignals(True)
+        self.region_combo.clear()
+        for region in list_regions(country):
+            self.region_combo.addItem(region)
+        if self.region_combo.count() > 0:
+            index = self.region_combo.findText(current_region)
+            self.region_combo.setCurrentIndex(index if index >= 0 else 0)
+        self.region_combo.blockSignals(False)
+
+    def _on_country_changed(self) -> None:
+        country = self._selected_country()
+        if country is None:
+            return
+        self._sync_regions_for_country(country)
+        self._on_region_changed()
+
+    def _on_region_changed(self) -> None:
+        if self._suppress_geo_autofill:
+            return
+        country = self._selected_country()
+        region = self._selected_region()
+        if country is None or region is None:
+            return
+        profile = get_region_profile(country, region)
+        if profile is None:
+            return
+        self.infrastructure_damage_input.setValue(profile.infrastructure_damage_percent)
+        self.road_access_input.setValue(profile.road_access_score)
+        self.health_operability_input.setValue(profile.health_operability_score)
+        self.water_availability_input.setValue(profile.local_water_liters_per_day)
+        self.food_supply_ratio_input.setValue(profile.local_food_supply_ratio)
+        if self.latitude_input is not None:
+            self.latitude_input.setValue(profile.latitude)
+        if self.longitude_input is not None:
+            self.longitude_input.setValue(profile.longitude)
+        self.statusBar().showMessage(
+            f"Applied regional profile: {country} / {region}"
+        )
+
+    def _current_location_label(self) -> str:
+        return format_location_label(self._selected_country(), self._selected_region())
 
     def _read_resources_from_table(self) -> tuple[InventoryPosition, ...]:
         if self.resource_table is None:
