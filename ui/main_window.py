@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from dataclasses import replace
+from pathlib import Path
+from shutil import copyfile
 
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QAction, QFont
@@ -10,6 +12,7 @@ from PySide6.QtWidgets import (
     QCompleter,
     QDockWidget,
     QDoubleSpinBox,
+    QFileDialog,
     QFormLayout,
     QGridLayout,
     QHBoxLayout,
@@ -416,7 +419,47 @@ class MainWindow(QMainWindow):
         reload_geo_action.triggered.connect(self._reload_geography_catalog)
         toolbar.addAction(reload_geo_action)
 
-    def _reload_geography_catalog(self) -> None:
+        import_geo_action = QAction("Import Geography CSV", self)
+        import_geo_action.setStatusTip("Import an external geography CSV and reload location catalog")
+        import_geo_action.triggered.connect(self._import_geography_catalog)
+        toolbar.addAction(import_geo_action)
+
+    def _import_geography_catalog(self) -> None:
+        selected_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Import Geography CSV",
+            str(geography_csv_path().parent),
+            "CSV Files (*.csv)",
+        )
+        if not selected_path:
+            return
+
+        source_path = Path(selected_path)
+        if not source_path.exists() or not source_path.is_file():
+            QMessageBox.warning(self, "Import Geography", "Selected file does not exist.")
+            return
+
+        errors = validate_geography_csv(source_path)
+        if errors:
+            preview = "\n".join(errors[:12])
+            QMessageBox.warning(
+                self,
+                "Geography CSV Validation",
+                f"Cannot import this file due to validation issues:\n{preview}",
+            )
+            return
+
+        target_path = geography_csv_path()
+        if source_path.resolve() != target_path.resolve():
+            copyfile(source_path, target_path)
+
+        loaded_count = self._reload_geography_catalog()
+        if loaded_count is not None:
+            self.statusBar().showMessage(
+                f"Imported and reloaded geography catalog ({loaded_count} region profiles)"
+            )
+
+    def _reload_geography_catalog(self) -> int | None:
         errors = validate_geography_csv()
         if errors:
             preview = "\n".join(errors[:8])
@@ -425,7 +468,7 @@ class MainWindow(QMainWindow):
                 "Geography CSV Validation",
                 f"Geography catalog has validation issues:\n{preview}",
             )
-            return
+            return None
 
         old_world_region = self._selected_world_region()
         old_country = self._selected_country()
@@ -463,6 +506,7 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(
             f"Reloaded geography catalog ({loaded_count} region profiles) from {geography_csv_path().name}"
         )
+        return loaded_count
 
     def _build_left_navigation(self) -> None:
         navigation_dock = QDockWidget("Scenarios", self)
