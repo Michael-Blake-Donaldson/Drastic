@@ -6,8 +6,10 @@ from PySide6.QtWidgets import QApplication
 
 from app.config import AppConfig
 from app.paths import ensure_application_directories
+from engine.planner import PlanningEngine
 from persistence.database import DatabaseManager
 from reference_data.assumptions import build_default_assumption_registry
+from services.scenario_factory import build_seed_scenario
 from ui.main_window import MainWindow
 
 
@@ -32,6 +34,14 @@ def run_desktop_app() -> int:
     app.setOrganizationName(config.organization_name)
 
     assumption_registry = build_default_assumption_registry()
-    window = MainWindow(config=config, assumption_registry=assumption_registry)
+    planning_engine = PlanningEngine(assumption_registry)
+    seed_scenario = build_seed_scenario()
+    initial_analysis = planning_engine.analyze(seed_scenario)
+    window = MainWindow(
+        config=config,
+        assumption_registry=assumption_registry,
+        active_scenario=seed_scenario,
+        initial_analysis=initial_analysis,
+    )
     window.show()
     return app.exec()

@@ -18,14 +18,22 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AppConfig
-from domain.models import AssumptionRecord
+from domain.models import AnalysisSummary, AssumptionRecord, Scenario
 
 
 class MainWindow(QMainWindow):
-    def __init__(self, config: AppConfig, assumption_registry: tuple[AssumptionRecord, ...]) -> None:
+    def __init__(
+        self,
+        config: AppConfig,
+        assumption_registry: tuple[AssumptionRecord, ...],
+        active_scenario: Scenario,
+        initial_analysis: AnalysisSummary,
+    ) -> None:
         super().__init__()
         self.config = config
         self.assumption_registry = assumption_registry
+        self.active_scenario = active_scenario
+        self.initial_analysis = initial_analysis
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -79,11 +87,21 @@ class MainWindow(QMainWindow):
         summary_widget = QWidget()
         layout = QVBoxLayout(summary_widget)
         layout.addWidget(QLabel("Critical Coverage"))
-        layout.addWidget(QLabel("Pending engine implementation"))
+        layout.addWidget(QLabel(f"{self.initial_analysis.critical_coverage_percent}%"))
         layout.addWidget(QLabel("Overall Coverage"))
-        layout.addWidget(QLabel("Pending engine implementation"))
+        layout.addWidget(QLabel(f"{self.initial_analysis.overall_coverage_percent}%"))
+        layout.addWidget(QLabel("Estimated Cost"))
+        layout.addWidget(QLabel(f"${self.initial_analysis.total_estimated_cost:,.2f}"))
+        layout.addWidget(QLabel("Confidence"))
+        layout.addWidget(QLabel(self.initial_analysis.confidence_level.value.title()))
         layout.addWidget(QLabel("Risk Flags"))
-        layout.addWidget(QLabel("No active scenario loaded"))
+        if self.initial_analysis.risk_flags:
+            for flag in self.initial_analysis.risk_flags:
+                label = QLabel(f"• {flag.title}")
+                label.setWordWrap(True)
+                layout.addWidget(label)
+        else:
+            layout.addWidget(QLabel("No active risk flags"))
         layout.addStretch(1)
 
         summary_dock.setWidget(summary_widget)
@@ -104,7 +122,11 @@ class MainWindow(QMainWindow):
         intro.setReadOnly(True)
         intro.setPlainText(
             "DRASTIC is being rebuilt as a Python-first, offline planning system.\n\n"
-            "This initial foundation establishes the desktop shell, persistence layer, and assumption registry so the planning engine can be implemented against stable contracts."
+            f"Active seeded scenario: {self.active_scenario.name}\n"
+            f"Hazard: {self.active_scenario.hazard_profile.hazard_type.value}\n"
+            f"Duration: {self.active_scenario.hazard_profile.duration_days} days\n"
+            f"Affected population: {self.active_scenario.population_profile.total_population:,}\n\n"
+            "This foundation now includes a first-pass standards-backed analysis slice wired into the desktop shell."
         )
 
         layout.addWidget(intro)
@@ -137,15 +159,25 @@ class MainWindow(QMainWindow):
 
         notes = QTextEdit()
         notes.setReadOnly(True)
-        notes.setPlainText(
-            "Result contracts will be connected here once the first calculation modules are implemented.\n\n"
-            "Planned result blocks:\n"
-            "- Critical and overall coverage\n"
-            "- Unmet critical needs\n"
-            "- Staffing shortfalls by role\n"
-            "- Transport bottlenecks and delivery waves\n"
-            "- Cost bundle and confidence trace\n"
-            "- Scenario comparison deltas"
-        )
+        lines = [
+            f"Critical coverage: {self.initial_analysis.critical_coverage_percent}%",
+            f"Overall coverage: {self.initial_analysis.overall_coverage_percent}%",
+            f"Estimated total cost: ${self.initial_analysis.total_estimated_cost:,.2f}",
+            f"Confidence: {self.initial_analysis.confidence_level.value}",
+            "",
+            "Computed metrics:",
+        ]
+        for key, value in self.initial_analysis.metadata.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+        lines.append("Unmet critical needs:")
+        if self.initial_analysis.unmet_critical_needs:
+            lines.extend(f"- {item}" for item in self.initial_analysis.unmet_critical_needs)
+        else:
+            lines.append("- None")
+        lines.append("")
+        lines.append("Assumptions trace:")
+        lines.extend(f"- {identifier}" for identifier in self.initial_analysis.assumptions_trace)
+        notes.setPlainText("\n".join(lines))
         layout.addWidget(notes)
         return widget
