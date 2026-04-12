@@ -75,6 +75,16 @@ class PlanningEngine:
                 )
             )
 
+        if transport.estimated_delivery_days > scenario.hazard_profile.duration_days:
+            risk_flags.append(
+                RiskFlag(
+                    code="delivery_window_exceeded",
+                    title="Delivery window exceeded",
+                    detail="Estimated delivery time exceeds the scenario duration assumptions, indicating likely timeline slippage.",
+                    confidence_level=ConfidenceLevel.CONDITIONAL,
+                )
+            )
+
         confidence = ConfidenceLevel.CONDITIONAL
         if (
             scenario.population_profile.total_population <= 0
@@ -102,6 +112,10 @@ class PlanningEngine:
             "transport_mass_required_kg": round(transport.required_mass_kg, 2),
             "transport_capacity_kg": round(transport.available_capacity_kg, 2),
             "transport_estimated_waves": transport.estimated_waves,
+            "transport_estimated_delivery_days": round(transport.estimated_delivery_days, 2),
+            "transport_daily_movable_capacity_kg": round(transport.daily_movable_capacity_kg, 2),
+            "transport_assumed_route_distance_km": round(transport.assumed_route_distance_km, 2),
+            "transport_average_speed_kmh": round(transport.average_speed_kmh, 2),
             "personnel_cost": round(costs.personnel_cost, 2),
             "transport_cost": round(costs.transport_cost, 2),
             "procurement_cost": round(costs.procurement_cost, 2),

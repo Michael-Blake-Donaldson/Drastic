@@ -94,6 +94,7 @@ class MainWindow(QMainWindow):
         self.compare_left_combo: QComboBox | None = None
         self.compare_right_combo: QComboBox | None = None
         self.comparison_profile_combo: QComboBox | None = None
+        self.metric_filter_combo: QComboBox | None = None
         self.compare_output: QTextEdit | None = None
         self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
@@ -435,9 +436,12 @@ class MainWindow(QMainWindow):
         self.compare_right_combo = QComboBox()
         self.comparison_profile_combo = QComboBox()
         self.comparison_profile_combo.addItems(["Balanced", "Coverage First", "Cost First"])
+        self.metric_filter_combo = QComboBox()
+        self.metric_filter_combo.addItems(["All Metrics", "Coverage", "Cost", "Staffing", "Transport"])
         self.compare_left_combo.currentIndexChanged.connect(self._run_comparison)
         self.compare_right_combo.currentIndexChanged.connect(self._run_comparison)
         self.comparison_profile_combo.currentIndexChanged.connect(self._run_comparison)
+        self.metric_filter_combo.currentIndexChanged.connect(self._run_comparison)
         run_compare_button = QPushButton("Run Comparison")
         run_compare_button.clicked.connect(self._run_comparison)
         swap_button = QPushButton("Swap")
@@ -460,6 +464,8 @@ class MainWindow(QMainWindow):
         selector_row.addWidget(self.compare_right_combo)
         selector_row.addWidget(QLabel("Profile"))
         selector_row.addWidget(self.comparison_profile_combo)
+        selector_row.addWidget(QLabel("Metrics"))
+        selector_row.addWidget(self.metric_filter_combo)
         selector_row.addWidget(swap_button)
         selector_row.addWidget(run_compare_button)
         selector_row.addWidget(export_compare_button)
@@ -913,6 +919,8 @@ class MainWindow(QMainWindow):
         if self.compare_left_combo is None or self.compare_right_combo is None or self.compare_output is None:
             return
         profile = self.comparison_profile_combo.currentText() if self.comparison_profile_combo else "Balanced"
+        metric_filter = self.metric_filter_combo.currentText() if self.metric_filter_combo else "All Metrics"
+        profile_weights = self._comparison_profile_weights(profile)
 
         left_id = self.compare_left_combo.currentData()
         right_id = self.compare_right_combo.currentData()
@@ -944,6 +952,8 @@ class MainWindow(QMainWindow):
             f"Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
             f"Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
             f"Profile: {profile}",
+            f"Profile weights: {profile_weights}",
+            f"Metric filter: {metric_filter}",
             f"Lineage A: {self._format_lineage(left_lineage)}",
             f"Lineage B: {self._format_lineage(right_lineage)}",
             "",
@@ -958,11 +968,18 @@ class MainWindow(QMainWindow):
         ]
 
         shared_keys = sorted(set(left_analysis.metadata).intersection(right_analysis.metadata))
+        filtered_count = 0
         for key in shared_keys:
             left_value = left_analysis.metadata[key]
             right_value = right_analysis.metadata[key]
             if isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
+                if not self._matches_metric_filter(key, metric_filter):
+                    continue
+                filtered_count += 1
                 lines.append(f"- {key}: {right_value - left_value:+.2f}")
+
+        if filtered_count == 0:
+            lines.append("- No numeric metrics matched the selected filter.")
 
         lines.append("")
         lines.append("Scenario A unmet critical needs:")
@@ -984,6 +1001,8 @@ class MainWindow(QMainWindow):
             "left_analysis": left_analysis,
             "right_analysis": right_analysis,
             "profile": profile,
+            "profile_weights": profile_weights,
+            "metric_filter": metric_filter,
             "winner": winner,
             "lineage_left": self._format_lineage(left_lineage),
             "lineage_right": self._format_lineage(right_lineage),
@@ -1005,24 +1024,48 @@ class MainWindow(QMainWindow):
         return " -> ".join(f"{entry.name} [{entry.variant_label}]" for entry in lineage)
 
     def _comparison_winner(self, left: AnalysisSummary, right: AnalysisSummary, profile: str) -> str:
-        if profile == "Coverage First":
-            critical_weight = 3.0
-            overall_weight = 1.5
-            cost_weight = 1 / 20000
-        elif profile == "Cost First":
-            critical_weight = 1.5
-            overall_weight = 1.0
-            cost_weight = 1 / 5000
-        else:
-            critical_weight = 2.0
-            overall_weight = 1.0
-            cost_weight = 1 / 10000
+        weights = self._comparison_profile_weights(profile)
+        critical_weight = weights["critical"]
+        overall_weight = weights["overall"]
+        cost_weight = weights["cost"]
 
         left_score = (left.critical_coverage_percent * critical_weight) + (left.overall_coverage_percent * overall_weight) - (left.total_estimated_cost * cost_weight)
         right_score = (right.critical_coverage_percent * critical_weight) + (right.overall_coverage_percent * overall_weight) - (right.total_estimated_cost * cost_weight)
         if abs(left_score - right_score) < 0.01:
             return "Equivalent planning score across selected metrics."
         return "Scenario B leads selected metrics." if right_score > left_score else "Scenario A leads selected metrics."
+
+    def _comparison_profile_weights(self, profile: str) -> dict[str, float]:
+        if profile == "Coverage First":
+            return {"critical": 3.0, "overall": 1.5, "cost": 1 / 20000}
+        if profile == "Cost First":
+            return {"critical": 1.5, "overall": 1.0, "cost": 1 / 5000}
+        return {"critical": 2.0, "overall": 1.0, "cost": 1 / 10000}
+
+    def _matches_metric_filter(self, key: str, selected_filter: str) -> bool:
+        if selected_filter == "All Metrics":
+            return True
+        category = self._metric_category(key)
+        if selected_filter == "Coverage":
+            return category == "Coverage"
+        if selected_filter == "Cost":
+            return category == "Cost"
+        if selected_filter == "Staffing":
+            return category == "Staffing"
+        if selected_filter == "Transport":
+            return category == "Transport"
+        return True
+
+    def _metric_category(self, key: str) -> str:
+        if key.startswith("transport_"):
+            return "Transport"
+        if key.startswith("personnel_") or "staff" in key:
+            return "Staffing"
+        if key.startswith("cost_") or key.endswith("_cost") or "cost" in key:
+            return "Cost"
+        if "coverage" in key:
+            return "Coverage"
+        return "Other"
 
     def _branch_selected_tree_node(self) -> None:
         selected_id = self._selected_tree_scenario_id()
@@ -1241,6 +1284,7 @@ class MainWindow(QMainWindow):
             left_analysis=payload["left_analysis"],
             right_analysis=payload["right_analysis"],
             profile=payload["profile"],
+            profile_weights=payload["profile_weights"],
             winner=payload["winner"],
             lineage_left=payload["lineage_left"],
             lineage_right=payload["lineage_right"],

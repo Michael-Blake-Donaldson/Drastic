@@ -37,6 +37,10 @@ class TransportResult:
     available_capacity_kg: float
     coverage: float
     estimated_waves: int
+    estimated_delivery_days: float
+    daily_movable_capacity_kg: float
+    average_speed_kmh: float
+    assumed_route_distance_km: float
 
 
 @dataclass(frozen=True)
