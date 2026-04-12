@@ -5,7 +5,11 @@ from datetime import datetime
 from domain.models import AnalysisSummary, Scenario
 
 
-def build_scenario_report(scenario: Scenario, analysis: AnalysisSummary) -> str:
+def build_scenario_report(
+    scenario: Scenario,
+    analysis: AnalysisSummary,
+    timeline_day: int | None = None,
+) -> str:
     lines = [
         "DRASTIC Scenario Report",
         f"Generated: {datetime.now().isoformat(timespec='seconds')}",
@@ -20,6 +24,14 @@ def build_scenario_report(scenario: Scenario, analysis: AnalysisSummary) -> str:
         f"- Duration days: {scenario.hazard_profile.duration_days}",
         f"- Base scenario id: {scenario.base_scenario_id or 'None'}",
         f"- Lineage summary: {'Root baseline' if scenario.base_scenario_id is None else f'Variant of {scenario.base_scenario_id}'}",
+        "",
+        "Map Simulation Context",
+        f"- World region: {scenario.world_region or 'n/a'}",
+        f"- Country: {scenario.country or 'n/a'}",
+        f"- Region: {scenario.region or 'n/a'}",
+        f"- Latitude: {_format_coord(scenario.latitude)}",
+        f"- Longitude: {_format_coord(scenario.longitude)}",
+        f"- Timeline day snapshot: {timeline_day if timeline_day is not None else 1}",
         "",
         "Planning Summary",
         f"- Critical coverage: {analysis.critical_coverage_percent}%",
@@ -86,6 +98,7 @@ def build_comparison_report(
     winner: str,
     lineage_left: str,
     lineage_right: str,
+    timeline_day: int | None = None,
 ) -> str:
     lines = [
         "DRASTIC Comparison Report",
@@ -99,6 +112,21 @@ def build_comparison_report(
         f"- Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
         f"- Lineage A: {lineage_left}",
         f"- Lineage B: {lineage_right}",
+        f"- Timeline day snapshot: {timeline_day if timeline_day is not None else 1}",
+        "",
+        "Map Context A",
+        f"- World region: {left_scenario.world_region or 'n/a'}",
+        f"- Country: {left_scenario.country or 'n/a'}",
+        f"- Region: {left_scenario.region or 'n/a'}",
+        f"- Latitude: {_format_coord(left_scenario.latitude)}",
+        f"- Longitude: {_format_coord(left_scenario.longitude)}",
+        "",
+        "Map Context B",
+        f"- World region: {right_scenario.world_region or 'n/a'}",
+        f"- Country: {right_scenario.country or 'n/a'}",
+        f"- Region: {right_scenario.region or 'n/a'}",
+        f"- Latitude: {_format_coord(right_scenario.latitude)}",
+        f"- Longitude: {_format_coord(right_scenario.longitude)}",
         "",
         "Top-Level Deltas (B - A)",
         f"- Critical coverage delta: {right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent:+.1f}%",
@@ -153,6 +181,12 @@ def _metric_delta(right_analysis: AnalysisSummary, left_analysis: AnalysisSummar
     if isinstance(right_value, (int, float)) and isinstance(left_value, (int, float)):
         return f"{right_value - left_value:+.2f}"
     return "n/a"
+
+
+def _format_coord(value: float | None) -> str:
+    if value is None:
+        return "n/a"
+    return f"{value:.4f}"
 
 
 def filtered_metric_deltas(

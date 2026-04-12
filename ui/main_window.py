@@ -4,8 +4,8 @@ from dataclasses import replace
 from pathlib import Path
 from shutil import copyfile
 
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QAction, QFont
+from PySide6.QtCore import Qt, QRectF
+from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -25,6 +25,7 @@ from PySide6.QtWidgets import (
     QPushButton,
     QInputDialog,
     QSpinBox,
+    QSlider,
     QStatusBar,
     QTableWidget,
     QTableWidgetItem,
@@ -129,6 +130,106 @@ def build_comparison_output_text(
     return "\n".join(lines)
 
 
+def build_timeline_projection_lines(scenario: Scenario, analysis: AnalysisSummary, day: int) -> list[str]:
+    duration_days = max(1, scenario.hazard_profile.duration_days)
+    clamped_day = max(1, min(day, duration_days))
+    progress = clamped_day / duration_days
+
+    critical_start = max(0.0, min(analysis.critical_coverage_percent * 0.55, 100.0))
+    overall_start = max(0.0, min(analysis.overall_coverage_percent * 0.60, 100.0))
+    critical_now = critical_start + (analysis.critical_coverage_percent - critical_start) * progress
+    overall_now = overall_start + (analysis.overall_coverage_percent - overall_start) * progress
+
+    displaced_population = scenario.population_profile.displaced_population
+    unmet_start = max(len(analysis.unmet_critical_needs), int(displaced_population * 0.35))
+    unmet_now = max(0, int(unmet_start * (1.0 - progress)))
+
+    total_cost = analysis.total_estimated_cost
+    projected_cost = total_cost * progress
+
+    transport_days = analysis.metadata.get("transport_estimated_delivery_days")
+    delivery_eta = None
+    if isinstance(transport_days, (int, float)):
+        delivery_eta = max(0.0, float(transport_days) - clamped_day)
+
+    daily_capacity_kg = analysis.metadata.get("transport_daily_movable_capacity_kg")
+    moved_tons = None
+    if isinstance(daily_capacity_kg, (int, float)):
+        moved_tons = (float(daily_capacity_kg) * clamped_day) / 1000.0
+
+    lines = [
+        f"Timeline Day {clamped_day}/{duration_days}",
+        f"Hazard: {scenario.hazard_profile.hazard_type.value.title()} ({scenario.hazard_profile.severity_band})",
+        f"Projected critical coverage: {critical_now:.1f}%",
+        f"Projected overall coverage: {overall_now:.1f}%",
+        f"Remaining unmet critical demand index: {unmet_now:,}",
+        f"Cumulative operational spend: ${projected_cost:,.2f}",
+    ]
+    if delivery_eta is not None:
+        lines.append(f"Estimated delivery ETA remaining: {delivery_eta:.1f} days")
+    if moved_tons is not None:
+        lines.append(f"Projected tonnage moved: {moved_tons:,.1f} tons")
+    return lines
+
+
+class ScenarioMapCanvas(QWidget):
+    def __init__(self, parent: QWidget | None = None) -> None:
+        super().__init__(parent)
+        self._latitude: float | None = None
+        self._longitude: float | None = None
+        self._location_label = ""
+        self.setMinimumHeight(290)
+
+    def set_location(self, latitude: float | None, longitude: float | None, label: str) -> None:
+        self._latitude = latitude
+        self._longitude = longitude
+        self._location_label = label
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        canvas = self.rect().adjusted(10, 10, -10, -10)
+        painter.fillRect(canvas, QColor("#dfe9f5"))
+        painter.setPen(QPen(QColor("#9bb0c8"), 1))
+
+        for step in range(1, 12):
+            x = canvas.left() + int((canvas.width() * step) / 12)
+            painter.drawLine(x, canvas.top(), x, canvas.bottom())
+        for step in range(1, 6):
+            y = canvas.top() + int((canvas.height() * step) / 6)
+            painter.drawLine(canvas.left(), y, canvas.right(), y)
+
+        painter.setPen(QPen(QColor("#6f859b"), 1.2))
+        painter.drawRect(canvas)
+
+        if self._latitude is None or self._longitude is None:
+            painter.setPen(QColor("#39526d"))
+            painter.drawText(canvas, Qt.AlignCenter, "Choose a location to place a scenario marker.")
+            return
+
+        marker_x = canvas.left() + ((self._longitude + 180.0) / 360.0) * canvas.width()
+        marker_y = canvas.top() + ((90.0 - self._latitude) / 180.0) * canvas.height()
+        marker_point = QRectF(marker_x - 7, marker_y - 7, 14, 14)
+
+        painter.setPen(QPen(QColor("#8f1212"), 2))
+        painter.setBrush(QColor("#d02d2d"))
+        painter.drawEllipse(marker_point)
+
+        painter.setPen(QPen(QColor("#9f1d1d"), 1, Qt.DashLine))
+        painter.drawLine(int(marker_x), canvas.top(), int(marker_x), canvas.bottom())
+        painter.drawLine(canvas.left(), int(marker_y), canvas.right(), int(marker_y))
+
+        painter.setPen(QColor("#1f2c3a"))
+        label = self._location_label or "Selected Location"
+        painter.drawText(
+            canvas.adjusted(12, 12, -12, -12),
+            Qt.AlignTop | Qt.AlignLeft,
+            f"{label}\nLat: {self._latitude:.4f}  Lon: {self._longitude:.4f}",
+        )
+
+
 class MainWindow(QMainWindow):
     def __init__(
         self,
@@ -186,6 +287,11 @@ class MainWindow(QMainWindow):
         self.compare_output: QTextEdit | None = None
         self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
+        self.map_tab_index: int | None = None
+        self.map_canvas: ScenarioMapCanvas | None = None
+        self.timeline_slider: QSlider | None = None
+        self.timeline_day_label: QLabel | None = None
+        self.timeline_summary: QTextEdit | None = None
         self.editor_inputs: list[QWidget] = []
         self.compare_kpi_labels: dict[str, QLabel] = {}
         self.resource_add_button: QPushButton | None = None
@@ -611,6 +717,7 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._build_overview_tab(), "Scenario")
         tabs.addTab(self._build_assumptions_tab(), "Assumptions")
         tabs.addTab(self._build_results_tab(), "Results")
+        self.map_tab_index = tabs.addTab(self._build_map_tab(), "Map Simulation")
         self.compare_tab_index = tabs.addTab(self._build_compare_tab(), "Compare")
         self.workspace_tabs = tabs
         self.setCentralWidget(tabs)
@@ -645,9 +752,11 @@ class MainWindow(QMainWindow):
         self.latitude_input = QDoubleSpinBox()
         self.latitude_input.setRange(-90.0, 90.0)
         self.latitude_input.setDecimals(4)
+        self.latitude_input.valueChanged.connect(lambda _value: self._refresh_map_location_preview())
         self.longitude_input = QDoubleSpinBox()
         self.longitude_input.setRange(-180.0, 180.0)
         self.longitude_input.setDecimals(4)
+        self.longitude_input.valueChanged.connect(lambda _value: self._refresh_map_location_preview())
         self.hazard_combo = QComboBox()
         for hazard in HazardType:
             self.hazard_combo.addItem(hazard.value, hazard)
@@ -909,6 +1018,38 @@ class MainWindow(QMainWindow):
         layout.addWidget(self._section_header("Planning Results"))
         layout.addWidget(self._subtle_hint("Review computed metrics, unmet needs, and assumptions trace."))
         layout.addWidget(notes)
+        return widget
+
+    def _build_map_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        self.map_canvas = ScenarioMapCanvas(widget)
+        layout.addWidget(self._section_header("Operational Map"))
+        layout.addWidget(self._subtle_hint("Marker updates from selected coordinates and timeline day."))
+        layout.addWidget(self.map_canvas)
+
+        timeline_row = QHBoxLayout()
+        timeline_row.addWidget(QLabel("Timeline"))
+        self.timeline_slider = QSlider(Qt.Horizontal)
+        self.timeline_slider.setRange(1, max(1, self.active_scenario.hazard_profile.duration_days))
+        self.timeline_slider.setValue(1)
+        self.timeline_slider.setTickPosition(QSlider.TicksBelow)
+        self.timeline_slider.setSingleStep(1)
+        self.timeline_slider.valueChanged.connect(self._on_timeline_day_changed)
+        self.timeline_day_label = QLabel("Day 1")
+        timeline_row.addWidget(self.timeline_slider)
+        timeline_row.addWidget(self.timeline_day_label)
+        layout.addLayout(timeline_row)
+
+        self.timeline_summary = QTextEdit()
+        self.timeline_summary.setReadOnly(True)
+        self.timeline_summary.setFont(QFont("Consolas", 10))
+        self.timeline_summary.setMinimumHeight(180)
+        layout.addWidget(self._section_header("Simulation Snapshot"))
+        layout.addWidget(self.timeline_summary)
+
+        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
         return widget
 
     def _build_compare_tab(self) -> QWidget:
@@ -1270,6 +1411,7 @@ class MainWindow(QMainWindow):
                 self.longitude_input.setValue(scenario.longitude)
             elif profile is not None:
                 self.longitude_input.setValue(profile.longitude)
+        self._refresh_map_location_preview()
 
     def _selected_country(self) -> str | None:
         if self.country_combo is None:
@@ -1371,6 +1513,7 @@ class MainWindow(QMainWindow):
             self.latitude_input.setValue(profile.latitude)
         if self.longitude_input is not None:
             self.longitude_input.setValue(profile.longitude)
+        self._refresh_map_location_preview()
         self._refresh_validation_banner()
         self.statusBar().showMessage(
             f"Applied regional profile: {country} / {region}"
@@ -1575,6 +1718,7 @@ class MainWindow(QMainWindow):
         self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
+        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
         self.statusBar().showMessage(f"Analysis updated for scenario: {self.active_scenario.name}")
 
     def _load_selected_scenario(self) -> None:
@@ -1597,6 +1741,7 @@ class MainWindow(QMainWindow):
         self._refresh_validation_banner()
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
+        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
         self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
 
     def _validate_scenario(self, scenario: Scenario) -> list[str]:
@@ -1991,6 +2136,49 @@ class MainWindow(QMainWindow):
         lines.extend(f"- {identifier}" for identifier in analysis.assumptions_trace)
         self.results_notes.setPlainText("\n".join(lines))
 
+    def _refresh_map_location_preview(self) -> None:
+        if self.map_canvas is None or self.latitude_input is None or self.longitude_input is None:
+            return
+        self.map_canvas.set_location(
+            self.latitude_input.value(),
+            self.longitude_input.value(),
+            self._current_location_label(),
+        )
+
+    def _on_timeline_day_changed(self, value: int) -> None:
+        if self.timeline_day_label is not None:
+            self.timeline_day_label.setText(f"Day {value}")
+        self._refresh_timeline_summary()
+
+    def _refresh_map_tab(self, scenario: Scenario, analysis: AnalysisSummary) -> None:
+        if self.map_canvas is None:
+            return
+
+        self.map_canvas.set_location(scenario.latitude, scenario.longitude, scenario.hazard_profile.location_label)
+
+        if self.timeline_slider is not None:
+            previous_day = self.timeline_slider.value()
+            max_day = max(1, scenario.hazard_profile.duration_days)
+            self.timeline_slider.blockSignals(True)
+            self.timeline_slider.setRange(1, max_day)
+            self.timeline_slider.setValue(min(previous_day, max_day))
+            self.timeline_slider.blockSignals(False)
+            if self.timeline_day_label is not None:
+                self.timeline_day_label.setText(f"Day {self.timeline_slider.value()}")
+
+        self._refresh_timeline_summary(analysis)
+
+    def _refresh_timeline_summary(self, analysis: AnalysisSummary | None = None) -> None:
+        if self.timeline_summary is None or self.timeline_slider is None:
+            return
+        reference_analysis = analysis if analysis is not None else self.initial_analysis
+        lines = build_timeline_projection_lines(
+            self.active_scenario,
+            reference_analysis,
+            self.timeline_slider.value(),
+        )
+        self.timeline_summary.setPlainText("\n".join(lines))
+
     def _format_metric_key(self, key: str) -> str:
         words = key.replace("_", " ").strip().split()
         return " ".join(word.capitalize() for word in words)
@@ -2014,7 +2202,8 @@ class MainWindow(QMainWindow):
 
     def _export_active_report(self) -> None:
         analysis = self.planning_engine.analyze(self.active_scenario)
-        report_text = build_scenario_report(self.active_scenario, analysis)
+        timeline_day = self.timeline_slider.value() if self.timeline_slider is not None else 1
+        report_text = build_scenario_report(self.active_scenario, analysis, timeline_day=timeline_day)
 
         output_path = write_text_report(
             self.config.export_directory,
@@ -2039,6 +2228,7 @@ class MainWindow(QMainWindow):
             winner=payload["winner"],
             lineage_left=payload["lineage_left"],
             lineage_right=payload["lineage_right"],
+            timeline_day=self.timeline_slider.value() if self.timeline_slider is not None else 1,
         )
 
         output_path = write_text_report(

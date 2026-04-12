@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import unittest
 
 from domain.enums import ConfidenceLevel, HazardType, ScenarioStatus
@@ -33,6 +34,11 @@ class ComparisonReportTests(unittest.TestCase):
             ),
             variant_label=variant_label,
             base_scenario_id=None,
+            world_region="North America",
+            country="USA",
+            region="Florida",
+            latitude=27.6648,
+            longitude=-81.5158,
         )
 
     def _analysis(self, critical: float, overall: float, cost: float, metadata: dict[str, float]) -> AnalysisSummary:
@@ -149,6 +155,35 @@ class ComparisonReportTests(unittest.TestCase):
 
         self.assertIn("- Metric filter: Staffing", report)
         self.assertIn("- No numeric metrics matched the selected filter.", report)
+
+    def test_comparison_report_includes_map_context_and_timeline_day(self) -> None:
+        left_scenario = self._scenario("scenario-a", "Scenario A", "baseline")
+        right_scenario = self._scenario("scenario-b", "Scenario B", "branch")
+        right_scenario = replace(right_scenario, region="Georgia", latitude=32.1656, longitude=-82.9001)
+        left_analysis = self._analysis(78.0, 74.0, 120000.0, {"cost_total": 120000.0})
+        right_analysis = self._analysis(82.0, 79.0, 130000.0, {"cost_total": 130000.0})
+
+        report = build_comparison_report(
+            left_scenario=left_scenario,
+            right_scenario=right_scenario,
+            left_analysis=left_analysis,
+            right_analysis=right_analysis,
+            profile="Balanced",
+            profile_weights={"critical": 2.0, "overall": 1.0, "cost": 0.0001},
+            metric_filter="All Metrics",
+            winner="Scenario B leads selected metrics.",
+            lineage_left="Scenario A [baseline]",
+            lineage_right="Scenario A [baseline] -> Scenario B [branch]",
+            timeline_day=7,
+        )
+
+        self.assertIn("- Timeline day snapshot: 7", report)
+        self.assertIn("Map Context A", report)
+        self.assertIn("- Region: Florida", report)
+        self.assertIn("- Latitude: 27.6648", report)
+        self.assertIn("Map Context B", report)
+        self.assertIn("- Region: Georgia", report)
+        self.assertIn("- Latitude: 32.1656", report)
 
 
 if __name__ == "__main__":
