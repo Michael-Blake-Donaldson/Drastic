@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
     QDockWidget,
     QDoubleSpinBox,
     QFormLayout,
+    QHBoxLayout,
     QLabel,
     QLineEdit,
     QListWidget,
@@ -29,7 +30,14 @@ from PySide6.QtWidgets import (
 
 from app.config import AppConfig
 from domain.enums import HazardType
-from domain.models import AnalysisSummary, AssumptionRecord, Scenario
+from domain.models import (
+    AnalysisSummary,
+    AssumptionRecord,
+    InventoryPosition,
+    PersonnelRole,
+    Scenario,
+    TransportAsset,
+)
 from persistence.repositories import ScenarioRepository
 from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
@@ -74,6 +82,9 @@ class MainWindow(QMainWindow):
         self.health_operability_input: QDoubleSpinBox | None = None
         self.water_availability_input: QDoubleSpinBox | None = None
         self.food_supply_ratio_input: QDoubleSpinBox | None = None
+        self.resource_table: QTableWidget | None = None
+        self.personnel_table: QTableWidget | None = None
+        self.transport_table: QTableWidget | None = None
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -223,6 +234,36 @@ class MainWindow(QMainWindow):
         form.addRow("Local Food Supply Ratio", self.food_supply_ratio_input)
         form.addRow("Notes", self.notes_input)
 
+        self.resource_table = QTableWidget(0, 5, self)
+        self.resource_table.setHorizontalHeaderLabels(
+            ["Name", "Category", "Quantity", "Unit", "Priority"]
+        )
+        self.resource_table.horizontalHeader().setStretchLastSection(True)
+        resource_controls = self._build_table_controls(
+            on_add=self._add_resource_row,
+            on_remove=lambda: self._remove_selected_rows(self.resource_table),
+        )
+
+        self.personnel_table = QTableWidget(0, 5, self)
+        self.personnel_table.setHorizontalHeaderLabels(
+            ["Role", "Count", "Shift Hours", "Hourly Cost", "Volunteers"]
+        )
+        self.personnel_table.horizontalHeader().setStretchLastSection(True)
+        personnel_controls = self._build_table_controls(
+            on_add=self._add_personnel_row,
+            on_remove=lambda: self._remove_selected_rows(self.personnel_table),
+        )
+
+        self.transport_table = QTableWidget(0, 6, self)
+        self.transport_table.setHorizontalHeaderLabels(
+            ["Asset", "Capacity (kg)", "Quantity", "Speed (km/h)", "Reliability", "Cost/km"]
+        )
+        self.transport_table.horizontalHeader().setStretchLastSection(True)
+        transport_controls = self._build_table_controls(
+            on_add=self._add_transport_row,
+            on_remove=lambda: self._remove_selected_rows(self.transport_table),
+        )
+
         button_row = QWidget()
         button_layout = QVBoxLayout(button_row)
         save_button = QPushButton("Save Scenario")
@@ -233,9 +274,66 @@ class MainWindow(QMainWindow):
         button_layout.addWidget(analyze_button)
 
         layout.addLayout(form)
+        layout.addWidget(QLabel("Resources"))
+        layout.addWidget(self.resource_table)
+        layout.addLayout(resource_controls)
+        layout.addWidget(QLabel("Personnel"))
+        layout.addWidget(self.personnel_table)
+        layout.addLayout(personnel_controls)
+        layout.addWidget(QLabel("Transportation"))
+        layout.addWidget(self.transport_table)
+        layout.addLayout(transport_controls)
         layout.addWidget(button_row)
         self._populate_editor_from_scenario(self.active_scenario)
         return widget
+
+    def _build_table_controls(self, on_add: callable, on_remove: callable) -> QHBoxLayout:
+        controls = QHBoxLayout()
+        add_button = QPushButton("Add Row")
+        add_button.clicked.connect(on_add)
+        remove_button = QPushButton("Remove Selected")
+        remove_button.clicked.connect(on_remove)
+        controls.addWidget(add_button)
+        controls.addWidget(remove_button)
+        controls.addStretch(1)
+        return controls
+
+    def _add_resource_row(self) -> None:
+        if self.resource_table is None:
+            return
+        self._insert_row(
+            self.resource_table,
+            ["Resource", "water", "0", "liters", "1"],
+        )
+
+    def _add_personnel_row(self) -> None:
+        if self.personnel_table is None:
+            return
+        self._insert_row(
+            self.personnel_table,
+            ["Role", "0", "8", "0", "0"],
+        )
+
+    def _add_transport_row(self) -> None:
+        if self.transport_table is None:
+            return
+        self._insert_row(
+            self.transport_table,
+            ["Asset", "0", "1", "40", "0.8", "0"],
+        )
+
+    def _insert_row(self, table: QTableWidget, values: list[str]) -> None:
+        row = table.rowCount()
+        table.insertRow(row)
+        for col, value in enumerate(values):
+            table.setItem(row, col, QTableWidgetItem(value))
+
+    def _remove_selected_rows(self, table: QTableWidget | None) -> None:
+        if table is None:
+            return
+        selected_rows = {index.row() for index in table.selectedIndexes()}
+        for row in sorted(selected_rows, reverse=True):
+            table.removeRow(row)
 
     def _build_assumptions_tab(self) -> QWidget:
         widget = QWidget()
@@ -310,11 +408,67 @@ class MainWindow(QMainWindow):
         self.water_availability_input.setValue(scenario.infrastructure_profile.local_water_availability_liters_per_day)
         self.food_supply_ratio_input.setValue(scenario.infrastructure_profile.local_food_supply_ratio)
         self.notes_input.setPlainText(scenario.notes)
+        self._populate_resources_table(scenario.resources)
+        self._populate_personnel_table(scenario.personnel)
+        self._populate_transport_table(scenario.transportation)
+
+    def _populate_resources_table(self, resources: tuple[InventoryPosition, ...]) -> None:
+        if self.resource_table is None:
+            return
+        self.resource_table.setRowCount(0)
+        for resource in resources:
+            self._insert_row(
+                self.resource_table,
+                [
+                    resource.name,
+                    resource.category,
+                    str(resource.quantity),
+                    resource.unit,
+                    str(resource.priority_rank),
+                ],
+            )
+
+    def _populate_personnel_table(self, personnel: tuple[PersonnelRole, ...]) -> None:
+        if self.personnel_table is None:
+            return
+        self.personnel_table.setRowCount(0)
+        for role in personnel:
+            self._insert_row(
+                self.personnel_table,
+                [
+                    role.name,
+                    str(role.count),
+                    str(role.shift_hours),
+                    str(role.hourly_cost),
+                    str(role.volunteers),
+                ],
+            )
+
+    def _populate_transport_table(self, transportation: tuple[TransportAsset, ...]) -> None:
+        if self.transport_table is None:
+            return
+        self.transport_table.setRowCount(0)
+        for asset in transportation:
+            self._insert_row(
+                self.transport_table,
+                [
+                    asset.name,
+                    str(asset.capacity_kg),
+                    str(asset.quantity),
+                    str(asset.speed_kmh),
+                    str(asset.reliability_score),
+                    str(asset.cost_per_km),
+                ],
+            )
 
     def _build_scenario_from_editor(self) -> Scenario:
         hazard_type = self.hazard_combo.currentData() if self.hazard_combo is not None else HazardType.FLOOD
         if not isinstance(hazard_type, HazardType):
             hazard_type = HazardType.FLOOD
+
+        resources = self._read_resources_from_table()
+        personnel = self._read_personnel_from_table()
+        transportation = self._read_transport_from_table()
 
         return replace(
             self.active_scenario,
@@ -340,8 +494,95 @@ class MainWindow(QMainWindow):
                 local_water_availability_liters_per_day=self.water_availability_input.value(),
                 local_food_supply_ratio=self.food_supply_ratio_input.value(),
             ),
+            resources=resources,
+            personnel=personnel,
+            transportation=transportation,
             notes=self.notes_input.toPlainText().strip(),
         )
+
+    def _read_resources_from_table(self) -> tuple[InventoryPosition, ...]:
+        if self.resource_table is None:
+            return ()
+        items: list[InventoryPosition] = []
+        for row in range(self.resource_table.rowCount()):
+            name = self._table_text(self.resource_table, row, 0, "Resource")
+            category = self._table_text(self.resource_table, row, 1, "water")
+            quantity = self._to_float(self._table_text(self.resource_table, row, 2, "0"), 0.0)
+            unit = self._table_text(self.resource_table, row, 3, "liters")
+            priority = self._to_int(self._table_text(self.resource_table, row, 4, "1"), 1)
+            items.append(
+                InventoryPosition(
+                    name=name,
+                    category=category,
+                    quantity=quantity,
+                    unit=unit,
+                    priority_rank=priority,
+                )
+            )
+        return tuple(items)
+
+    def _read_personnel_from_table(self) -> tuple[PersonnelRole, ...]:
+        if self.personnel_table is None:
+            return ()
+        items: list[PersonnelRole] = []
+        for row in range(self.personnel_table.rowCount()):
+            name = self._table_text(self.personnel_table, row, 0, "Role")
+            count = self._to_int(self._table_text(self.personnel_table, row, 1, "0"), 0)
+            shift_hours = self._to_float(self._table_text(self.personnel_table, row, 2, "8"), 8.0)
+            hourly_cost = self._to_float(self._table_text(self.personnel_table, row, 3, "0"), 0.0)
+            volunteers = self._to_int(self._table_text(self.personnel_table, row, 4, "0"), 0)
+            items.append(
+                PersonnelRole(
+                    name=name,
+                    count=count,
+                    shift_hours=shift_hours,
+                    hourly_cost=hourly_cost,
+                    volunteers=volunteers,
+                )
+            )
+        return tuple(items)
+
+    def _read_transport_from_table(self) -> tuple[TransportAsset, ...]:
+        if self.transport_table is None:
+            return ()
+        items: list[TransportAsset] = []
+        for row in range(self.transport_table.rowCount()):
+            name = self._table_text(self.transport_table, row, 0, "Asset")
+            capacity_kg = self._to_float(self._table_text(self.transport_table, row, 1, "0"), 0.0)
+            quantity = self._to_int(self._table_text(self.transport_table, row, 2, "1"), 1)
+            speed_kmh = self._to_float(self._table_text(self.transport_table, row, 3, "40"), 40.0)
+            reliability_score = self._to_float(self._table_text(self.transport_table, row, 4, "0.8"), 0.8)
+            cost_per_km = self._to_float(self._table_text(self.transport_table, row, 5, "0"), 0.0)
+            items.append(
+                TransportAsset(
+                    name=name,
+                    capacity_kg=capacity_kg,
+                    quantity=quantity,
+                    speed_kmh=speed_kmh,
+                    reliability_score=max(0.0, min(reliability_score, 1.0)),
+                    cost_per_km=cost_per_km,
+                )
+            )
+        return tuple(items)
+
+    def _table_text(self, table: QTableWidget, row: int, col: int, fallback: str) -> str:
+        item = table.item(row, col)
+        if item is None:
+            return fallback
+        value = item.text().strip()
+        return value if value else fallback
+
+    def _to_float(self, raw: str, fallback: float) -> float:
+        try:
+            return float(raw)
+        except ValueError:
+            return fallback
+
+    def _to_int(self, raw: str, fallback: int) -> int:
+        try:
+            return int(float(raw))
+        except ValueError:
+            return fallback
 
     def _create_new_scenario(self) -> None:
         scenario = self.scenario_repository.save_scenario(build_default_scenario())
