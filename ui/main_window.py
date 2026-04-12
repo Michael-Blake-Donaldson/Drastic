@@ -24,6 +24,8 @@ from PySide6.QtWidgets import (
     QTableWidgetItem,
     QTabWidget,
     QTextEdit,
+    QTreeWidget,
+    QTreeWidgetItem,
     QToolBar,
     QVBoxLayout,
     QWidget,
@@ -42,6 +44,7 @@ from domain.models import (
 from persistence.repositories import ScenarioRepository
 from engine.planner import PlanningEngine
 from domain.models import HazardProfile, InfrastructureProfile, PopulationProfile
+from services.report_export import write_text_report
 from services.scenario_factory import build_default_scenario
 
 
@@ -90,6 +93,7 @@ class MainWindow(QMainWindow):
         self.compare_left_combo: QComboBox | None = None
         self.compare_right_combo: QComboBox | None = None
         self.compare_output: QTextEdit | None = None
+        self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
         self.editor_inputs: list[QWidget] = []
         self.resource_add_button: QPushButton | None = None
@@ -147,6 +151,7 @@ class MainWindow(QMainWindow):
 
         export_action = QAction("Export", self)
         export_action.setStatusTip("Export the active scenario package")
+        export_action.triggered.connect(self._export_active_report)
         toolbar.addAction(export_action)
 
     def _build_left_navigation(self) -> None:
@@ -430,6 +435,8 @@ class MainWindow(QMainWindow):
         run_compare_button.clicked.connect(self._run_comparison)
         swap_button = QPushButton("Swap")
         swap_button.clicked.connect(self._swap_comparison_selection)
+        export_compare_button = QPushButton("Export Comparison")
+        export_compare_button.clicked.connect(self._export_comparison_report)
 
         selector_row.addWidget(QLabel("Scenario A"))
         selector_row.addWidget(self.compare_left_combo)
@@ -437,6 +444,11 @@ class MainWindow(QMainWindow):
         selector_row.addWidget(self.compare_right_combo)
         selector_row.addWidget(swap_button)
         selector_row.addWidget(run_compare_button)
+        selector_row.addWidget(export_compare_button)
+
+        lineage_tree = QTreeWidget()
+        lineage_tree.setHeaderLabels(["Scenario Branch Tree"])
+        self.lineage_tree = lineage_tree
 
         output = QTextEdit()
         output.setReadOnly(True)
@@ -444,7 +456,10 @@ class MainWindow(QMainWindow):
         self.compare_output = output
 
         layout.addLayout(selector_row)
+        layout.addWidget(QLabel("Branch Lineage"))
+        layout.addWidget(lineage_tree)
         layout.addWidget(output)
+        self._refresh_lineage_tree()
         return widget
 
     def _refresh_scenario_list(self, selected_scenario_id: str | None = None) -> None:
@@ -467,6 +482,43 @@ class MainWindow(QMainWindow):
             self.scenario_list_widget.setCurrentRow(0)
         self.scenario_list_widget.blockSignals(False)
         self._refresh_compare_selectors(summaries)
+        self._refresh_lineage_tree()
+
+    def _refresh_lineage_tree(self) -> None:
+        if self.lineage_tree is None:
+            return
+
+        summaries = self.scenario_repository.list_scenarios()
+        by_id = {summary.scenario_id: summary for summary in summaries}
+        children_by_parent: dict[str, list] = {}
+        roots = []
+
+        for summary in summaries:
+            parent_id = summary.base_scenario_id
+            if parent_id and parent_id in by_id:
+                children_by_parent.setdefault(parent_id, []).append(summary)
+            else:
+                roots.append(summary)
+
+        self.lineage_tree.clear()
+
+        def add_node(parent_item: QTreeWidgetItem | None, summary) -> None:
+            label = f"{summary.name} [{summary.variant_label}] ({summary.status.value})"
+            node = QTreeWidgetItem([label])
+            node.setData(0, Qt.UserRole, summary.scenario_id)
+            if parent_item is None:
+                self.lineage_tree.addTopLevelItem(node)
+            else:
+                parent_item.addChild(node)
+            children = children_by_parent.get(summary.scenario_id, [])
+            children.sort(key=lambda s: s.updated_at)
+            for child in children:
+                add_node(node, child)
+
+        roots.sort(key=lambda s: s.updated_at)
+        for root in roots:
+            add_node(None, root)
+        self.lineage_tree.expandAll()
 
     def _refresh_compare_selectors(self, summaries: list) -> None:
         if self.compare_left_combo is None or self.compare_right_combo is None:
@@ -957,3 +1009,51 @@ class MainWindow(QMainWindow):
         lines.append("Assumptions trace:")
         lines.extend(f"- {identifier}" for identifier in analysis.assumptions_trace)
         self.results_notes.setPlainText("\n".join(lines))
+
+    def _export_active_report(self) -> None:
+        analysis = self.planning_engine.analyze(self.active_scenario)
+        lines = [
+            f"Scenario: {self.active_scenario.name}",
+            f"Variant: {self.active_scenario.variant_label}",
+            f"Status: {self.active_scenario.status.value}",
+            f"Hazard: {self.active_scenario.hazard_profile.hazard_type.value}",
+            f"Location: {self.active_scenario.hazard_profile.location_label}",
+            f"Duration days: {self.active_scenario.hazard_profile.duration_days}",
+            "",
+            f"Critical coverage: {analysis.critical_coverage_percent}%",
+            f"Overall coverage: {analysis.overall_coverage_percent}%",
+            f"Estimated total cost: ${analysis.total_estimated_cost:,.2f}",
+            f"Confidence: {analysis.confidence_level.value}",
+            "",
+            "Computed metrics:",
+        ]
+        for key, value in analysis.metadata.items():
+            lines.append(f"- {key}: {value}")
+        lines.append("")
+        lines.append("Unmet critical needs:")
+        if analysis.unmet_critical_needs:
+            lines.extend(f"- {item}" for item in analysis.unmet_critical_needs)
+        else:
+            lines.append("- None")
+
+        output_path = write_text_report(
+            self.config.export_directory,
+            prefix=f"scenario_report_{self.active_scenario.variant_label}",
+            content="\n".join(lines),
+        )
+        self.statusBar().showMessage(f"Exported scenario report: {output_path}")
+
+    def _export_comparison_report(self) -> None:
+        if self.compare_output is None:
+            return
+        content = self.compare_output.toPlainText().strip()
+        if not content:
+            QMessageBox.information(self, "No Comparison", "Run a comparison before exporting.")
+            return
+
+        output_path = write_text_report(
+            self.config.export_directory,
+            prefix="comparison_report",
+            content=content,
+        )
+        self.statusBar().showMessage(f"Exported comparison report: {output_path}")
