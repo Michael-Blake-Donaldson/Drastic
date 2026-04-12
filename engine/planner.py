@@ -1,18 +1,12 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
-
 from domain.enums import ConfidenceLevel
 from domain.models import AnalysisSummary, AssumptionRecord, RiskFlag, Scenario
-
-
-@dataclass(frozen=True)
-class AssumptionIndex:
-    water_liters_per_person_per_day: float
-    food_kcal_per_person_per_day: float
-    staffing_shift_hours_per_day: float
-    transport_reliability_buffer: float
-    contingency_ratio: float
+from engine.contracts import AssumptionIndex
+from engine.modules.costs import compute_costs
+from engine.modules.needs import compute_needs
+from engine.modules.staffing import compute_staffing
+from engine.modules.transport import compute_transport
 
 
 class PlanningEngine:
@@ -21,69 +15,22 @@ class PlanningEngine:
         self.assumption_index = self._build_index(assumption_registry)
 
     def analyze(self, scenario: Scenario) -> AnalysisSummary:
-        days = scenario.hazard_profile.duration_days
-        population = scenario.population_profile.total_population
-        displaced_population = max(scenario.population_profile.displaced_population, 0)
-        contingency_multiplier = 1.0 + self.assumption_index.contingency_ratio
-
-        water_required = (
-            population
-            * days
-            * self.assumption_index.water_liters_per_person_per_day
-            * contingency_multiplier
+        needs = compute_needs(scenario, self.assumption_index)
+        staffing = compute_staffing(scenario, self.assumption_index)
+        transport = compute_transport(scenario, self.assumption_index)
+        costs = compute_costs(
+            scenario,
+            needs,
+            transport_reliability_buffer=self.assumption_index.transport_reliability_buffer,
         )
-        local_water_offset = scenario.infrastructure_profile.local_water_availability_liters_per_day * days
-        water_available = local_water_offset + self._resource_quantity(scenario, "water", "liters")
 
-        food_required = (
-            population
-            * days
-            * self.assumption_index.food_kcal_per_person_per_day
-            * contingency_multiplier
-        )
-        local_food_ratio = max(0.0, min(scenario.infrastructure_profile.local_food_supply_ratio, 1.0))
-        local_food_offset = food_required * local_food_ratio
-        food_available = local_food_offset + self._resource_quantity(scenario, "food", "kcal")
-
-        medical_hours_required = population / 1000 * 48 * days
-        logistics_hours_required = max(displaced_population, population * 0.35) / 1000 * 36 * days
-        engineering_hours_required = population / 1000 * 16 * days
-        coordination_hours_required = population / 1000 * 12 * days
-        total_staff_hours_required = (
-            medical_hours_required
-            + logistics_hours_required
-            + engineering_hours_required
-            + coordination_hours_required
-        )
-        available_staff_hours = self._available_staff_hours(scenario)
-
-        total_mass_to_move_kg = self._resource_mass_kg(scenario)
-        transport_capacity_kg = self._transport_capacity_kg(scenario)
-
-        water_coverage = min(1.0, water_available / water_required) if water_required else 1.0
-        food_coverage = min(1.0, food_available / food_required) if food_required else 1.0
-        staffing_coverage = (
-            min(1.0, available_staff_hours / total_staff_hours_required)
-            if total_staff_hours_required
-            else 1.0
-        )
-        transport_coverage = min(1.0, transport_capacity_kg / total_mass_to_move_kg) if total_mass_to_move_kg else 1.0
+        water_coverage = needs.water_coverage
+        food_coverage = needs.food_coverage
+        staffing_coverage = staffing.coverage
+        transport_coverage = transport.coverage
 
         critical_coverage = min(water_coverage, food_coverage, staffing_coverage, transport_coverage)
         overall_coverage = (water_coverage + food_coverage + staffing_coverage + transport_coverage) / 4
-
-        personnel_cost = sum(
-            role.count * role.shift_hours * role.hourly_cost * days for role in scenario.personnel
-        )
-        transport_cost = sum(
-            asset.quantity * asset.cost_per_km * 100 * days * self.assumption_index.transport_reliability_buffer
-            for asset in scenario.transportation
-        )
-        procurement_cost = (
-            max(water_required - water_available, 0) * 0.002
-            + max(food_required - food_available, 0) * 0.0005
-        )
-        total_estimated_cost = personnel_cost + transport_cost + procurement_cost
 
         unmet_critical_needs = []
         risk_flags = []
@@ -128,22 +75,49 @@ class PlanningEngine:
                 )
             )
 
+        confidence = ConfidenceLevel.CONDITIONAL
+        if (
+            scenario.population_profile.total_population <= 0
+            or not scenario.resources
+            or not scenario.personnel
+            or not scenario.transportation
+        ):
+            confidence = ConfidenceLevel.LOW
+            risk_flags.append(
+                RiskFlag(
+                    code="low_confidence_incomplete_inputs",
+                    title="Incomplete scenario inputs",
+                    detail="One or more required operational sections are empty or invalid, lowering confidence in planning outputs.",
+                    confidence_level=ConfidenceLevel.LOW,
+                )
+            )
+
         metadata = {
-            "water_required_liters": round(water_required, 2),
-            "water_available_liters": round(water_available, 2),
-            "food_required_kcal": round(food_required, 2),
-            "food_available_kcal": round(food_available, 2),
-            "staff_hours_required": round(total_staff_hours_required, 2),
-            "staff_hours_available": round(available_staff_hours, 2),
-            "transport_mass_required_kg": round(total_mass_to_move_kg, 2),
-            "transport_capacity_kg": round(transport_capacity_kg, 2),
+            "water_required_liters": round(needs.water_required_liters, 2),
+            "water_available_liters": round(needs.water_available_liters, 2),
+            "food_required_kcal": round(needs.food_required_kcal, 2),
+            "food_available_kcal": round(needs.food_available_kcal, 2),
+            "staff_hours_required": round(staffing.total_required_hours, 2),
+            "staff_hours_available": round(staffing.total_available_hours, 2),
+            "transport_mass_required_kg": round(transport.required_mass_kg, 2),
+            "transport_capacity_kg": round(transport.available_capacity_kg, 2),
+            "transport_estimated_waves": transport.estimated_waves,
+            "personnel_cost": round(costs.personnel_cost, 2),
+            "transport_cost": round(costs.transport_cost, 2),
+            "procurement_cost": round(costs.procurement_cost, 2),
+            "staffing_required_by_role": {
+                role: round(value, 2) for role, value in staffing.required_by_role.items()
+            },
+            "staffing_available_by_role": {
+                role: round(value, 2) for role, value in staffing.available_by_role.items()
+            },
         }
 
         return AnalysisSummary(
             critical_coverage_percent=round(critical_coverage * 100, 1),
             overall_coverage_percent=round(overall_coverage * 100, 1),
-            total_estimated_cost=round(total_estimated_cost, 2),
-            confidence_level=ConfidenceLevel.CONDITIONAL,
+            total_estimated_cost=round(costs.total_cost, 2),
+            confidence_level=confidence,
             unmet_critical_needs=tuple(unmet_critical_needs),
             risk_flags=tuple(risk_flags),
             assumptions_trace=tuple(record.identifier for record in self.assumption_registry),
@@ -159,38 +133,3 @@ class PlanningEngine:
             transport_reliability_buffer=values["transport.reliability_buffer"],
             contingency_ratio=values["contingency.general_buffer_ratio"],
         )
-
-    def _resource_quantity(self, scenario: Scenario, category: str, unit: str) -> float:
-        total = 0.0
-        for resource in scenario.resources:
-            if resource.category == category and resource.unit == unit:
-                total += resource.quantity
-        return total
-
-    def _resource_mass_kg(self, scenario: Scenario) -> float:
-        total = 0.0
-        for resource in scenario.resources:
-            if resource.unit == "kg":
-                total += resource.quantity
-            elif resource.unit == "liters":
-                total += resource.quantity
-        return total
-
-    def _available_staff_hours(self, scenario: Scenario) -> float:
-        total = 0.0
-        for role in scenario.personnel:
-            usable_shift_hours = min(role.shift_hours, self.assumption_index.staffing_shift_hours_per_day)
-            total += role.count * usable_shift_hours * scenario.hazard_profile.duration_days
-            total += role.volunteers * (usable_shift_hours * 0.75) * scenario.hazard_profile.duration_days
-        return total
-
-    def _transport_capacity_kg(self, scenario: Scenario) -> float:
-        total = 0.0
-        for asset in scenario.transportation:
-            total += (
-                asset.capacity_kg
-                * asset.quantity
-                * max(min(asset.reliability_score, 1.0), 0.0)
-                * self.assumption_index.transport_reliability_buffer
-            )
-        return total
