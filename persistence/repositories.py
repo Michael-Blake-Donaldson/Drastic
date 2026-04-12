@@ -3,8 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from dataclasses import replace
+from datetime import datetime
 from pathlib import Path
 
+from domain.enums import HazardType, ScenarioStatus
 from domain.models import Scenario, ScenarioSummary, utc_now
 from domain.serialization import scenario_from_dict, scenario_to_dict
 
@@ -29,11 +31,11 @@ class ScenarioRepository:
             ScenarioSummary(
                 scenario_id=row[0],
                 name=row[1],
-                hazard_type=row[2],
+                hazard_type=HazardType(row[2]),
                 severity_band=row[3],
                 location_label=row[4],
-                status=row[5],
-                updated_at=utc_now().fromisoformat(row[6]),
+                status=ScenarioStatus(row[5]),
+                updated_at=datetime.fromisoformat(row[6]),
             )
             for row in rows
         ]
