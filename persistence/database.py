@@ -26,6 +26,8 @@ class DatabaseManager:
                     scenario_id TEXT PRIMARY KEY,
                     project_id TEXT NOT NULL,
                     name TEXT NOT NULL,
+                    variant_label TEXT NOT NULL DEFAULT 'baseline',
+                    base_scenario_id TEXT,
                     hazard_type TEXT NOT NULL,
                     severity_band TEXT NOT NULL,
                     duration_days INTEGER NOT NULL,
@@ -48,4 +50,13 @@ class DatabaseManager:
                 )
                 """
             )
+
+            cursor.execute("PRAGMA table_info(scenarios)")
+            existing_columns = {row[1] for row in cursor.fetchall()}
+            if "variant_label" not in existing_columns:
+                cursor.execute(
+                    "ALTER TABLE scenarios ADD COLUMN variant_label TEXT NOT NULL DEFAULT 'baseline'"
+                )
+            if "base_scenario_id" not in existing_columns:
+                cursor.execute("ALTER TABLE scenarios ADD COLUMN base_scenario_id TEXT")
             connection.commit()

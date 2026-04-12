@@ -5,6 +5,7 @@ import sqlite3
 from dataclasses import replace
 from datetime import datetime
 from pathlib import Path
+from uuid import uuid4
 
 from domain.enums import HazardType, ScenarioStatus
 from domain.models import Scenario, ScenarioSummary, utc_now
@@ -20,7 +21,7 @@ class ScenarioRepository:
             cursor = connection.cursor()
             cursor.execute(
                 """
-                SELECT scenario_id, name, hazard_type, severity_band, location_label, status, updated_at
+                SELECT scenario_id, name, variant_label, base_scenario_id, hazard_type, severity_band, location_label, status, updated_at
                 FROM scenarios
                 ORDER BY updated_at DESC
                 """
@@ -31,14 +32,33 @@ class ScenarioRepository:
             ScenarioSummary(
                 scenario_id=row[0],
                 name=row[1],
-                hazard_type=HazardType(row[2]),
-                severity_band=row[3],
-                location_label=row[4],
-                status=ScenarioStatus(row[5]),
-                updated_at=datetime.fromisoformat(row[6]),
+                variant_label=row[2],
+                base_scenario_id=row[3],
+                hazard_type=HazardType(row[4]),
+                severity_band=row[5],
+                location_label=row[6],
+                status=ScenarioStatus(row[7]),
+                updated_at=datetime.fromisoformat(row[8]),
             )
             for row in rows
         ]
+
+    def branch_variant(self, source_scenario_id: str, variant_label: str) -> Scenario | None:
+        source = self.get_scenario(source_scenario_id)
+        if source is None:
+            return None
+
+        now = utc_now()
+        variant = replace(
+            source,
+            scenario_id=uuid4().hex,
+            name=f"{source.name} [{variant_label}]",
+            variant_label=variant_label,
+            base_scenario_id=source.scenario_id,
+            created_at=now,
+            updated_at=now,
+        )
+        return self.save_scenario(variant)
 
     def get_scenario(self, scenario_id: str) -> Scenario | None:
         with sqlite3.connect(self.database_path) as connection:
@@ -66,6 +86,8 @@ class ScenarioRepository:
                     scenario_id,
                     project_id,
                     name,
+                    variant_label,
+                    base_scenario_id,
                     hazard_type,
                     severity_band,
                     duration_days,
@@ -74,9 +96,11 @@ class ScenarioRepository:
                     created_at,
                     updated_at,
                     payload_json
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(scenario_id) DO UPDATE SET
                     name = excluded.name,
+                    variant_label = excluded.variant_label,
+                    base_scenario_id = excluded.base_scenario_id,
                     hazard_type = excluded.hazard_type,
                     severity_band = excluded.severity_band,
                     duration_days = excluded.duration_days,
@@ -89,6 +113,8 @@ class ScenarioRepository:
                     updated_scenario.scenario_id,
                     updated_scenario.project_id,
                     updated_scenario.name,
+                    updated_scenario.variant_label,
+                    updated_scenario.base_scenario_id,
                     updated_scenario.hazard_profile.hazard_type.value,
                     updated_scenario.hazard_profile.severity_band,
                     updated_scenario.hazard_profile.duration_days,

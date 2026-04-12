@@ -96,6 +96,8 @@ class Scenario:
     resources: tuple[InventoryPosition, ...] = ()
     personnel: tuple[PersonnelRole, ...] = ()
     transportation: tuple[TransportAsset, ...] = ()
+    variant_label: str = "baseline"
+    base_scenario_id: str | None = None
     created_at: datetime = field(default_factory=utc_now)
     updated_at: datetime = field(default_factory=utc_now)
     notes: str = ""
@@ -122,6 +124,8 @@ class Scenario:
 class ScenarioSummary:
     scenario_id: str
     name: str
+    variant_label: str
+    base_scenario_id: str | None
     hazard_type: HazardType
     severity_band: str
     location_label: str

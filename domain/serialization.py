@@ -19,6 +19,8 @@ def scenario_to_dict(scenario: Scenario) -> dict[str, object]:
         "scenario_id": scenario.scenario_id,
         "project_id": scenario.project_id,
         "name": scenario.name,
+        "variant_label": scenario.variant_label,
+        "base_scenario_id": scenario.base_scenario_id,
         "status": scenario.status.value,
         "hazard_profile": {
             "hazard_type": scenario.hazard_profile.hazard_type.value,
@@ -90,6 +92,10 @@ def scenario_from_dict(payload: dict[str, object]) -> Scenario:
         scenario_id=str(payload["scenario_id"]),
         project_id=str(payload["project_id"]),
         name=str(payload["name"]),
+        variant_label=str(payload.get("variant_label", "baseline")),
+        base_scenario_id=(
+            str(payload["base_scenario_id"]) if payload.get("base_scenario_id") is not None else None
+        ),
         status=ScenarioStatus(str(payload["status"])),
         hazard_profile=HazardProfile(
             hazard_type=HazardType(str(hazard_payload["hazard_type"])),

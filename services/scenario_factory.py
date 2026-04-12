@@ -42,6 +42,8 @@ def build_default_scenario(name: str = "New Planning Scenario") -> Scenario:
         scenario_id=uuid4().hex,
         project_id=uuid4().hex,
         name=name,
+        variant_label="baseline",
+        base_scenario_id=None,
         status=ScenarioStatus.DRAFT,
         hazard_profile=HazardProfile(
             hazard_type=HazardType.FLOOD,
@@ -80,6 +82,8 @@ def build_seed_scenario() -> Scenario:
         scenario_id="seed-earthquake-scenario",
         project_id="seed-project",
         name="Earthquake Baseline Planning Scenario",
+        variant_label="baseline",
+        base_scenario_id=None,
         hazard_profile=HazardProfile(
             hazard_type=HazardType.EARTHQUAKE,
             severity_band="high",

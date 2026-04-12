@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QMainWindow,
     QMessageBox,
     QPushButton,
+    QInputDialog,
     QSpinBox,
     QStatusBar,
     QTableWidget,
@@ -85,6 +86,10 @@ class MainWindow(QMainWindow):
         self.resource_table: QTableWidget | None = None
         self.personnel_table: QTableWidget | None = None
         self.transport_table: QTableWidget | None = None
+        self.workspace_tabs: QTabWidget | None = None
+        self.compare_left_combo: QComboBox | None = None
+        self.compare_right_combo: QComboBox | None = None
+        self.compare_output: QTextEdit | None = None
 
         self.setWindowTitle("DRASTIC Planner")
         self.resize(1480, 920)
@@ -116,8 +121,14 @@ class MainWindow(QMainWindow):
         analyze_action.triggered.connect(self._run_analysis)
         toolbar.addAction(analyze_action)
 
+        branch_action = QAction("Branch Variant", self)
+        branch_action.setStatusTip("Create a variant from the active scenario")
+        branch_action.triggered.connect(self._branch_variant)
+        toolbar.addAction(branch_action)
+
         compare_action = QAction("Compare Variants", self)
         compare_action.setStatusTip("Open the scenario comparison workspace")
+        compare_action.triggered.connect(self._open_compare_tab)
         toolbar.addAction(compare_action)
 
         export_action = QAction("Export", self)
@@ -168,6 +179,8 @@ class MainWindow(QMainWindow):
         tabs.addTab(self._build_overview_tab(), "Scenario")
         tabs.addTab(self._build_assumptions_tab(), "Assumptions")
         tabs.addTab(self._build_results_tab(), "Results")
+        tabs.addTab(self._build_compare_tab(), "Compare")
+        self.workspace_tabs = tabs
         self.setCentralWidget(tabs)
 
     def _build_overview_tab(self) -> QWidget:
@@ -367,6 +380,31 @@ class MainWindow(QMainWindow):
         layout.addWidget(notes)
         return widget
 
+    def _build_compare_tab(self) -> QWidget:
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+
+        selector_row = QHBoxLayout()
+        self.compare_left_combo = QComboBox()
+        self.compare_right_combo = QComboBox()
+        run_compare_button = QPushButton("Run Comparison")
+        run_compare_button.clicked.connect(self._run_comparison)
+
+        selector_row.addWidget(QLabel("Scenario A"))
+        selector_row.addWidget(self.compare_left_combo)
+        selector_row.addWidget(QLabel("Scenario B"))
+        selector_row.addWidget(self.compare_right_combo)
+        selector_row.addWidget(run_compare_button)
+
+        output = QTextEdit()
+        output.setReadOnly(True)
+        output.setPlainText("Select two scenarios and run comparison to view analysis deltas.")
+        self.compare_output = output
+
+        layout.addLayout(selector_row)
+        layout.addWidget(output)
+        return widget
+
     def _refresh_scenario_list(self, selected_scenario_id: str | None = None) -> None:
         if self.scenario_list_widget is None:
             return
@@ -375,7 +413,8 @@ class MainWindow(QMainWindow):
         self.scenario_list_widget.clear()
         summaries = self.scenario_repository.list_scenarios()
         for summary in summaries:
-            label = f"{summary.name} • {summary.hazard_type.value} • {summary.location_label}"
+            variant_text = f"[{summary.variant_label}]"
+            label = f"{summary.name} {variant_text} • {summary.hazard_type.value} • {summary.location_label}"
             item = QListWidgetItem(label)
             item.setData(Qt.UserRole, summary.scenario_id)
             self.scenario_list_widget.addItem(item)
@@ -385,6 +424,34 @@ class MainWindow(QMainWindow):
         if not selected_scenario_id and summaries:
             self.scenario_list_widget.setCurrentRow(0)
         self.scenario_list_widget.blockSignals(False)
+        self._refresh_compare_selectors(summaries)
+
+    def _refresh_compare_selectors(self, summaries: list) -> None:
+        if self.compare_left_combo is None or self.compare_right_combo is None:
+            return
+
+        current_left = self.compare_left_combo.currentData()
+        current_right = self.compare_right_combo.currentData()
+
+        self.compare_left_combo.blockSignals(True)
+        self.compare_right_combo.blockSignals(True)
+        self.compare_left_combo.clear()
+        self.compare_right_combo.clear()
+
+        for summary in summaries:
+            label = f"{summary.name} [{summary.variant_label}]"
+            self.compare_left_combo.addItem(label, summary.scenario_id)
+            self.compare_right_combo.addItem(label, summary.scenario_id)
+
+        if summaries:
+            left_index = self.compare_left_combo.findData(current_left)
+            right_index = self.compare_right_combo.findData(current_right)
+            self.compare_left_combo.setCurrentIndex(left_index if left_index >= 0 else 0)
+            default_right = 1 if len(summaries) > 1 else 0
+            self.compare_right_combo.setCurrentIndex(right_index if right_index >= 0 else default_right)
+
+        self.compare_left_combo.blockSignals(False)
+        self.compare_right_combo.blockSignals(False)
 
     def _populate_editor_from_scenario(self, scenario: Scenario) -> None:
         if not self.name_input:
@@ -592,6 +659,36 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Created new scenario: {scenario.name}")
         self._run_analysis()
 
+    def _branch_variant(self) -> None:
+        variant_label, ok = QInputDialog.getText(
+            self,
+            "Branch Variant",
+            "Variant label:",
+            text="what-if",
+        )
+        if not ok:
+            return
+        variant_label = variant_label.strip()
+        if not variant_label:
+            QMessageBox.warning(self, "Invalid Variant Label", "Variant label cannot be empty.")
+            return
+
+        source_scenario = self._build_scenario_from_editor()
+        self.active_scenario = self.scenario_repository.save_scenario(source_scenario)
+        variant = self.scenario_repository.branch_variant(
+            self.active_scenario.scenario_id,
+            variant_label=variant_label,
+        )
+        if variant is None:
+            QMessageBox.warning(self, "Variant Error", "Unable to create scenario variant.")
+            return
+
+        self.active_scenario = variant
+        self._populate_editor_from_scenario(variant)
+        self._refresh_scenario_list(selected_scenario_id=variant.scenario_id)
+        self.statusBar().showMessage(f"Created variant: {variant.name}")
+        self._run_analysis()
+
     def _save_active_scenario(self) -> None:
         scenario = self._build_scenario_from_editor()
         if scenario.population_profile.displaced_population > scenario.population_profile.total_population:
@@ -633,6 +730,69 @@ class MainWindow(QMainWindow):
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
         self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
+
+    def _open_compare_tab(self) -> None:
+        if self.workspace_tabs is None:
+            return
+        compare_index = self.workspace_tabs.indexOf(self.workspace_tabs.widget(3))
+        if compare_index >= 0:
+            self.workspace_tabs.setCurrentIndex(compare_index)
+
+    def _run_comparison(self) -> None:
+        if self.compare_left_combo is None or self.compare_right_combo is None or self.compare_output is None:
+            return
+
+        left_id = self.compare_left_combo.currentData()
+        right_id = self.compare_right_combo.currentData()
+        if not isinstance(left_id, str) or not isinstance(right_id, str):
+            return
+        if left_id == right_id:
+            self.compare_output.setPlainText("Choose two different scenarios to compare.")
+            return
+
+        left_scenario = self.scenario_repository.get_scenario(left_id)
+        right_scenario = self.scenario_repository.get_scenario(right_id)
+        if left_scenario is None or right_scenario is None:
+            self.compare_output.setPlainText("Unable to load one or both scenarios for comparison.")
+            return
+
+        left_analysis = self.planning_engine.analyze(left_scenario)
+        right_analysis = self.planning_engine.analyze(right_scenario)
+
+        lines = [
+            f"Scenario A: {left_scenario.name} [{left_scenario.variant_label}]",
+            f"Scenario B: {right_scenario.name} [{right_scenario.variant_label}]",
+            "",
+            "Top-level deltas (B - A):",
+            f"- Critical coverage: {right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent:+.1f}%",
+            f"- Overall coverage: {right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent:+.1f}%",
+            f"- Total estimated cost: ${right_analysis.total_estimated_cost - left_analysis.total_estimated_cost:+,.2f}",
+            "",
+            "Detailed metric deltas:",
+        ]
+
+        shared_keys = sorted(set(left_analysis.metadata).intersection(right_analysis.metadata))
+        for key in shared_keys:
+            left_value = left_analysis.metadata[key]
+            right_value = right_analysis.metadata[key]
+            if isinstance(left_value, (int, float)) and isinstance(right_value, (int, float)):
+                lines.append(f"- {key}: {right_value - left_value:+.2f}")
+
+        lines.append("")
+        lines.append("Scenario A unmet critical needs:")
+        if left_analysis.unmet_critical_needs:
+            lines.extend(f"- {item}" for item in left_analysis.unmet_critical_needs)
+        else:
+            lines.append("- None")
+
+        lines.append("")
+        lines.append("Scenario B unmet critical needs:")
+        if right_analysis.unmet_critical_needs:
+            lines.extend(f"- {item}" for item in right_analysis.unmet_critical_needs)
+        else:
+            lines.append("- None")
+
+        self.compare_output.setPlainText("\n".join(lines))
 
     def _update_summary_panel(self, analysis: AnalysisSummary) -> None:
         self.summary_labels["critical"].setText(f"{analysis.critical_coverage_percent}%")
