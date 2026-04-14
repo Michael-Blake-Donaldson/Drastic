@@ -2114,7 +2114,20 @@ class MainWindow(QMainWindow):
     def _update_results_view(self, analysis: AnalysisSummary) -> None:
         if self.results_notes is None:
             return
+        scenario = self.active_scenario
+        timeline_day = self.timeline_slider.value() if self.timeline_slider is not None else 1
+        def _format_coord(value):
+            return "n/a" if value is None else f"{value:.4f}"
+
         lines = [
+            "Map Simulation Context",
+            f"- World region: {scenario.world_region or 'n/a'}",
+            f"- Country: {scenario.country or 'n/a'}",
+            f"- Region: {scenario.region or 'n/a'}",
+            f"- Latitude: {_format_coord(scenario.latitude)}",
+            f"- Longitude: {_format_coord(scenario.longitude)}",
+            f"- Timeline day snapshot: {timeline_day}",
+            "",
             "Planning Summary",
             f"- Critical coverage: {analysis.critical_coverage_percent:.1f}%",
             f"- Overall coverage: {analysis.overall_coverage_percent:.1f}%",
