@@ -4,7 +4,7 @@ from dataclasses import replace
 from pathlib import Path
 from shutil import copyfile
 
-from PySide6.QtCore import Qt, QRectF
+from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
@@ -1040,7 +1040,63 @@ class MainWindow(QMainWindow):
         self.timeline_day_label = QLabel("Day 1")
         timeline_row.addWidget(self.timeline_slider)
         timeline_row.addWidget(self.timeline_day_label)
+
+        # Playback controls
+        self.timeline_play_button = QPushButton("Play")
+        self.timeline_pause_button = QPushButton("Pause")
+        self.timeline_start_button = QPushButton("|<")
+        self.timeline_end_button = QPushButton(">|")
+        self.timeline_play_button.clicked.connect(self._on_timeline_play)
+        self.timeline_pause_button.clicked.connect(self._on_timeline_pause)
+        self.timeline_start_button.clicked.connect(self._on_timeline_jump_start)
+        self.timeline_end_button.clicked.connect(self._on_timeline_jump_end)
+        timeline_row.addWidget(self.timeline_start_button)
+        timeline_row.addWidget(self.timeline_play_button)
+        timeline_row.addWidget(self.timeline_pause_button)
+        timeline_row.addWidget(self.timeline_end_button)
         layout.addLayout(timeline_row)
+
+        self.timeline_timer = QTimer(self)
+        self.timeline_timer.setInterval(600)  # ms per day step
+        self.timeline_timer.timeout.connect(self._on_timeline_tick)
+    def _on_timeline_play(self) -> None:
+        if self.timeline_timer.isActive():
+            return
+        self.timeline_play_button.setEnabled(False)
+        self.timeline_pause_button.setEnabled(True)
+        self.timeline_timer.start()
+
+    def _on_timeline_pause(self) -> None:
+        self.timeline_timer.stop()
+        self.timeline_play_button.setEnabled(True)
+        self.timeline_pause_button.setEnabled(False)
+
+    def _on_timeline_jump_start(self) -> None:
+        if self.timeline_slider is not None:
+            self.timeline_slider.setValue(1)
+        self._on_timeline_pause()
+
+    def _on_timeline_jump_end(self) -> None:
+        if self.timeline_slider is not None:
+            self.timeline_slider.setValue(self.timeline_slider.maximum())
+        self._on_timeline_pause()
+
+    def _on_timeline_tick(self) -> None:
+        if self.timeline_slider is None:
+            return
+        current = self.timeline_slider.value()
+        if current < self.timeline_slider.maximum():
+            self.timeline_slider.setValue(current + 1)
+        else:
+            self._on_timeline_pause()
+
+    # Ensure pause on manual slider move
+    def _on_timeline_day_changed(self, value: int) -> None:
+        if self.timeline_timer.isActive():
+            self._on_timeline_pause()
+        if self.timeline_day_label is not None:
+            self.timeline_day_label.setText(f"Day {value}")
+        self._refresh_timeline_summary()
 
         self.timeline_summary = QTextEdit()
         self.timeline_summary.setReadOnly(True)
