@@ -2240,12 +2240,47 @@ class MainWindow(QMainWindow):
     def _refresh_timeline_summary(self, analysis: AnalysisSummary | None = None) -> None:
         if self.timeline_summary is None or self.timeline_slider is None:
             return
+        scenario = self.active_scenario
         reference_analysis = analysis if analysis is not None else self.initial_analysis
-        lines = build_timeline_projection_lines(
-            self.active_scenario,
-            reference_analysis,
-            self.timeline_slider.value(),
-        )
+        day = self.timeline_slider.value() if self.timeline_slider else 1
+
+        # --- Simulation projection ---
+        from engine.simulation import project_simulation_timeline
+        timeline = project_simulation_timeline(scenario, reference_analysis)
+        day_idx = max(0, min(day - 1, len(timeline) - 1))
+        state = timeline[day_idx]
+
+        lines = [f"Timeline Day {state.day}/{len(timeline)}"]
+        lines.append("")
+        lines.append("Resources:")
+        for r in state.resources:
+            lines.append(f"- {r.name}: {r.remaining:.1f} {r.unit} (delivered: {r.delivered:.1f}, consumed: {r.consumed:.1f})")
+        lines.append("")
+        lines.append("Personnel:")
+        for p in state.personnel:
+            lines.append(f"- {p.name}: available {p.available}, deployed {p.deployed}, exhausted {p.exhausted}")
+        lines.append("")
+        lines.append("Transport:")
+        for t in state.transport:
+            lines.append(f"- {t.name}: idle {t.idle}, in use {t.in_use}, breakdowns {t.breakdowns}, arrivals {t.arrivals}")
+        lines.append("")
+        if state.unmet_needs:
+            lines.append("Unmet Needs:")
+            for need in state.unmet_needs:
+                lines.append(f"- {need}")
+            lines.append("")
+        if state.risk_flags:
+            lines.append("Risk Flags:")
+            for flag in state.risk_flags:
+                lines.append(f"- {flag}")
+            lines.append("")
+        if state.events:
+            lines.append("Event Log:")
+            for ev in state.events:
+                lines.append(f"- [{ev.code}] {ev.description} {ev.details}")
+        else:
+            lines.append("No events for this day.")
+
         self.timeline_summary.setPlainText("\n".join(lines))
 
     def _format_metric_key(self, key: str) -> str:
