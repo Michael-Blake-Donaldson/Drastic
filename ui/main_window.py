@@ -173,12 +173,21 @@ def build_timeline_projection_lines(scenario: Scenario, analysis: AnalysisSummar
 
 
 class ScenarioMapCanvas(QWidget):
+
     def __init__(self, parent: QWidget | None = None) -> None:
         super().__init__(parent)
         self._latitude: float | None = None
         self._longitude: float | None = None
         self._location_label = ""
-        self.setMinimumHeight(290)
+        self._resource_overlay: dict | None = None
+        self._event_markers: list | None = None
+        self._marker_tooltips: list | None = None
+        self._overlay_anim_color = QColor("#dfe9f5")
+        self._overlay_target_color = QColor("#dfe9f5")
+        self._overlay_anim_timer = QTimer(self)
+        self._overlay_anim_timer.setInterval(18)  # ~60fps
+        self._overlay_anim_timer.timeout.connect(self._animate_overlay_step)
+        self.setMinimumHeight(320)
 
     def set_location(self, latitude: float | None, longitude: float | None, label: str) -> None:
         self._latitude = latitude
@@ -186,12 +195,52 @@ class ScenarioMapCanvas(QWidget):
         self._location_label = label
         self.update()
 
+    def set_overlay_and_events(self, resource_overlay: dict | None, event_markers: list | None) -> None:
+        self._resource_overlay = resource_overlay
+        self._event_markers = event_markers
+        self._marker_tooltips = []
+        # Animate overlay color to new target
+        status = resource_overlay.get("status", "normal") if resource_overlay else "normal"
+        color_map = {
+            "critical": QColor(255, 210, 210),
+            "warning": QColor(255, 250, 200),
+            "good": QColor(220, 255, 220),
+            "normal": QColor("#dfe9f5"),
+        }
+        new_color = color_map.get(status, QColor("#dfe9f5"))
+        if new_color != self._overlay_target_color:
+            self._overlay_target_color = new_color
+            if not self._overlay_anim_timer.isActive():
+                self._overlay_anim_timer.start()
+        self.update()
+
+    def _animate_overlay_step(self):
+        # Smoothly interpolate overlay color toward target
+        c1 = self._overlay_anim_color
+        c2 = self._overlay_target_color
+        def lerp(a, b, t):
+            return a + (b - a) * t
+        t = 0.35  # Fast, but not instant
+        r = int(lerp(c1.red(), c2.red(), t))
+        g = int(lerp(c1.green(), c2.green(), t))
+        b = int(lerp(c1.blue(), c2.blue(), t))
+        a = int(lerp(c1.alpha(), c2.alpha(), t))
+        next_color = QColor(r, g, b, a)
+        if (abs(r - c2.red()) < 2 and abs(g - c2.green()) < 2 and abs(b - c2.blue()) < 2):
+            self._overlay_anim_color = c2
+            self._overlay_anim_timer.stop()
+        else:
+            self._overlay_anim_color = next_color
+        self.update()
+
     def paintEvent(self, event) -> None:
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing, True)
 
         canvas = self.rect().adjusted(10, 10, -10, -10)
-        painter.fillRect(canvas, QColor("#dfe9f5"))
+        # Resource overlay shading (animated color)
+        overlay_color = self._overlay_anim_color
+        painter.fillRect(canvas, overlay_color)
         painter.setPen(QPen(QColor("#9bb0c8"), 1))
 
         for step in range(1, 12):
@@ -216,6 +265,77 @@ class ScenarioMapCanvas(QWidget):
         painter.setPen(QPen(QColor("#8f1212"), 2))
         painter.setBrush(QColor("#d02d2d"))
         painter.drawEllipse(marker_point)
+
+        # Draw event markers (icons or colored dots) around the marker
+        if self._event_markers:
+            offset = 22
+            angle_step = 360 / max(1, len(self._event_markers))
+            icon_map = {
+                "resource": (QColor("#e67e22"), "R"),
+                "unmet_need": (QColor("#e74c3c"), "!"),
+                "personnel": (QColor("#2980b9"), "P"),
+                "transport": (QColor("#8e44ad"), "T"),
+            }
+            self._marker_tooltips = []
+            for idx, ev in enumerate(self._event_markers):
+                # Pick icon/color by event type
+                code = ev["code"]
+                if code.startswith("resource"):
+                    color, icon = icon_map["resource"]
+                elif code == "unmet_need":
+                    color, icon = icon_map["unmet_need"]
+                elif code.startswith("personnel"):
+                    color, icon = icon_map["personnel"]
+                elif code.startswith("transport"):
+                    color, icon = icon_map["transport"]
+                else:
+                    color, icon = QColor("#c0392b"), "?"
+                # Arrange in a circle
+                angle = angle_step * idx
+                import math
+                ex = marker_x + offset * math.cos(math.radians(angle))
+                ey = marker_y + offset * math.sin(math.radians(angle))
+                painter.setPen(QPen(color, 2))
+                painter.setBrush(color)
+                painter.drawEllipse(QRectF(ex - 8, ey - 8, 16, 16))
+                painter.setPen(QColor("#fff"))
+                painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
+                painter.drawText(QRectF(ex - 8, ey - 8, 16, 16), Qt.AlignCenter, icon)
+                # Store tooltip region and text
+                self._marker_tooltips.append((QRectF(ex - 8, ey - 8, 16, 16), f"{ev['description']}\n{ev['details']}"))
+        # Draw legend
+        legend_x = canvas.left() + 12
+        legend_y = canvas.bottom() - 70
+        legend_items = [
+            (QColor("#e67e22"), "Resource/Low", "R"),
+            (QColor("#e74c3c"), "Unmet Need", "!"),
+            (QColor("#2980b9"), "Personnel", "P"),
+            (QColor("#8e44ad"), "Transport", "T"),
+        ]
+        painter.setFont(QFont("Segoe UI", 9))
+        for i, (color, label, icon) in enumerate(legend_items):
+            y = legend_y + i * 18
+            painter.setPen(QPen(color, 2))
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(legend_x, y, 14, 14))
+            painter.setPen(QColor("#fff"))
+            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
+            painter.drawText(QRectF(legend_x, y, 14, 14), Qt.AlignCenter, icon)
+            painter.setPen(QColor("#1f2c3a"))
+            painter.setFont(QFont("Segoe UI", 9))
+            painter.drawText(legend_x + 20, y + 12, label)
+
+    def mouseMoveEvent(self, event):
+        # Show tooltip if hovering over an event marker
+        if not self._marker_tooltips:
+            self.setToolTip("")
+            return
+        pos = event.position() if hasattr(event, 'position') else event.pos()
+        for rect, tip in self._marker_tooltips:
+            if rect.contains(pos):
+                self.setToolTip(tip)
+                return
+        self.setToolTip("")
 
         painter.setPen(QPen(QColor("#9f1d1d"), 1, Qt.DashLine))
         painter.drawLine(int(marker_x), canvas.top(), int(marker_x), canvas.bottom())
@@ -2224,6 +2344,27 @@ class MainWindow(QMainWindow):
             return
 
         self.map_canvas.set_location(scenario.latitude, scenario.longitude, scenario.hazard_profile.location_label)
+
+        # --- Simulation overlay and events ---
+        from engine.simulation import project_simulation_timeline
+        day = self.timeline_slider.value() if self.timeline_slider else 1
+        timeline = project_simulation_timeline(scenario, analysis)
+        day_idx = max(0, min(day - 1, len(timeline) - 1))
+        state = timeline[day_idx]
+
+        # Overlay: status based on worst resource state
+        overlay_status = "good"
+        for r in state.resources:
+            if r.remaining < 0.2 * r.starting:
+                overlay_status = "critical"
+                break
+            elif r.remaining < 0.5 * r.starting:
+                overlay_status = "warning"
+        resource_overlay = {"status": overlay_status}
+
+        # Event markers: pass all events for the day
+        event_markers = [dict(code=ev.code, description=ev.description, details=ev.details) for ev in state.events]
+        self.map_canvas.set_overlay_and_events(resource_overlay, event_markers)
 
         if self.timeline_slider is not None:
             previous_day = self.timeline_slider.value()
