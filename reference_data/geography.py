@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -47,6 +48,9 @@ SAMPLE_ROW: tuple[str, ...] = (
 
 
 def geography_csv_path() -> Path:
+    # When frozen by PyInstaller, __file__ is unreliable; use sys._MEIPASS instead.
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS) / "reference_data" / "geography_profiles.csv"
     return Path(__file__).with_name("geography_profiles.csv")
 
 
