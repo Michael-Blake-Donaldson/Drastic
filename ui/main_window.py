@@ -5,8 +5,8 @@ from pathlib import Path
 from shutil import copyfile
 from time import perf_counter
 
-from PySide6.QtCore import Qt, QRectF, QThread, QTimer, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QFont, QKeySequence, QPainter, QPen
+from PySide6.QtCore import Qt, QThread, QTimer, Slot
+from PySide6.QtGui import QAction, QCloseEvent, QFont, QKeySequence
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -73,6 +73,8 @@ from services.report_templates import build_comparison_report, build_scenario_re
 from services.scenario_factory import build_default_scenario
 from ui.theme import APP_STYLESHEET, THEME_TOKENS
 from ui.workers import AnalysisWorker, ComparisonWorker, ComparisonExportWorker, ScenarioExportWorker
+from ui.map_view import LeafletMapView
+from ui.map_view import LeafletMapView
 
 
 def build_comparison_output_text(
@@ -176,182 +178,9 @@ def build_timeline_projection_lines(scenario: Scenario, analysis: AnalysisSummar
     return lines
 
 
-class ScenarioMapCanvas(QWidget):
-
-    def __init__(self, parent: QWidget | None = None) -> None:
-        super().__init__(parent)
-        self._latitude: float | None = None
-        self._longitude: float | None = None
-        self._location_label = ""
-        self._resource_overlay: dict | None = None
-        self._event_markers: list | None = None
-        self._marker_tooltips: list | None = None
-        self._overlay_anim_color = QColor("#dfe9f5")
-        self._overlay_target_color = QColor("#dfe9f5")
-        self._overlay_anim_timer = QTimer(self)
-        self._overlay_anim_timer.setInterval(18)  # ~60fps
-        self._overlay_anim_timer.timeout.connect(self._animate_overlay_step)
-        self.setMinimumHeight(320)
-
-    def set_location(self, latitude: float | None, longitude: float | None, label: str) -> None:
-        self._latitude = latitude
-        self._longitude = longitude
-        self._location_label = label
-        self.update()
-
-    def set_overlay_and_events(self, resource_overlay: dict | None, event_markers: list | None) -> None:
-        self._resource_overlay = resource_overlay
-        self._event_markers = event_markers
-        self._marker_tooltips = []
-        # Animate overlay color to new target
-        status = resource_overlay.get("status", "normal") if resource_overlay else "normal"
-        color_map = {
-            "critical": QColor(255, 210, 210),
-            "warning": QColor(255, 250, 200),
-            "good": QColor(220, 255, 220),
-            "normal": QColor("#dfe9f5"),
-        }
-        new_color = color_map.get(status, QColor("#dfe9f5"))
-        if new_color != self._overlay_target_color:
-            self._overlay_target_color = new_color
-            if not self._overlay_anim_timer.isActive():
-                self._overlay_anim_timer.start()
-        self.update()
-
-    def _animate_overlay_step(self):
-        # Smoothly interpolate overlay color toward target
-        c1 = self._overlay_anim_color
-        c2 = self._overlay_target_color
-        def lerp(a, b, t):
-            return a + (b - a) * t
-        t = 0.35  # Fast, but not instant
-        r = int(lerp(c1.red(), c2.red(), t))
-        g = int(lerp(c1.green(), c2.green(), t))
-        b = int(lerp(c1.blue(), c2.blue(), t))
-        a = int(lerp(c1.alpha(), c2.alpha(), t))
-        next_color = QColor(r, g, b, a)
-        if (abs(r - c2.red()) < 2 and abs(g - c2.green()) < 2 and abs(b - c2.blue()) < 2):
-            self._overlay_anim_color = c2
-            self._overlay_anim_timer.stop()
-        else:
-            self._overlay_anim_color = next_color
-        self.update()
-
-    def paintEvent(self, event) -> None:
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing, True)
-
-        canvas = self.rect().adjusted(10, 10, -10, -10)
-        # Resource overlay shading (animated color)
-        overlay_color = self._overlay_anim_color
-        painter.fillRect(canvas, overlay_color)
-        painter.setPen(QPen(QColor("#9bb0c8"), 1))
-
-        for step in range(1, 12):
-            x = canvas.left() + int((canvas.width() * step) / 12)
-            painter.drawLine(x, canvas.top(), x, canvas.bottom())
-        for step in range(1, 6):
-            y = canvas.top() + int((canvas.height() * step) / 6)
-            painter.drawLine(canvas.left(), y, canvas.right(), y)
-
-        painter.setPen(QPen(QColor("#6f859b"), 1.2))
-        painter.drawRect(canvas)
-
-        if self._latitude is None or self._longitude is None:
-            painter.setPen(QColor("#39526d"))
-            painter.drawText(canvas, Qt.AlignCenter, "Choose a location to place a scenario marker.")
-            return
-
-        marker_x = canvas.left() + ((self._longitude + 180.0) / 360.0) * canvas.width()
-        marker_y = canvas.top() + ((90.0 - self._latitude) / 180.0) * canvas.height()
-        marker_point = QRectF(marker_x - 7, marker_y - 7, 14, 14)
-
-        painter.setPen(QPen(QColor("#8f1212"), 2))
-        painter.setBrush(QColor("#d02d2d"))
-        painter.drawEllipse(marker_point)
-
-        # Draw event markers (icons or colored dots) around the marker
-        if self._event_markers:
-            offset = 22
-            angle_step = 360 / max(1, len(self._event_markers))
-            icon_map = {
-                "resource": (QColor("#e67e22"), "R"),
-                "unmet_need": (QColor("#e74c3c"), "!"),
-                "personnel": (QColor("#2980b9"), "P"),
-                "transport": (QColor("#8e44ad"), "T"),
-            }
-            self._marker_tooltips = []
-            for idx, ev in enumerate(self._event_markers):
-                # Pick icon/color by event type
-                code = ev["code"]
-                if code.startswith("resource"):
-                    color, icon = icon_map["resource"]
-                elif code == "unmet_need":
-                    color, icon = icon_map["unmet_need"]
-                elif code.startswith("personnel"):
-                    color, icon = icon_map["personnel"]
-                elif code.startswith("transport"):
-                    color, icon = icon_map["transport"]
-                else:
-                    color, icon = QColor("#c0392b"), "?"
-                # Arrange in a circle
-                angle = angle_step * idx
-                import math
-                ex = marker_x + offset * math.cos(math.radians(angle))
-                ey = marker_y + offset * math.sin(math.radians(angle))
-                painter.setPen(QPen(color, 2))
-                painter.setBrush(color)
-                painter.drawEllipse(QRectF(ex - 8, ey - 8, 16, 16))
-                painter.setPen(QColor("#fff"))
-                painter.setFont(QFont("Segoe UI", 10, QFont.Bold))
-                painter.drawText(QRectF(ex - 8, ey - 8, 16, 16), Qt.AlignCenter, icon)
-                # Store tooltip region and text
-                self._marker_tooltips.append((QRectF(ex - 8, ey - 8, 16, 16), f"{ev['description']}\n{ev['details']}"))
-        # Draw legend
-        legend_x = canvas.left() + 12
-        legend_y = canvas.bottom() - 70
-        legend_items = [
-            (QColor("#e67e22"), "Resource/Low", "R"),
-            (QColor("#e74c3c"), "Unmet Need", "!"),
-            (QColor("#2980b9"), "Personnel", "P"),
-            (QColor("#8e44ad"), "Transport", "T"),
-        ]
-        painter.setFont(QFont("Segoe UI", 9))
-        for i, (color, label, icon) in enumerate(legend_items):
-            y = legend_y + i * 18
-            painter.setPen(QPen(color, 2))
-            painter.setBrush(color)
-            painter.drawEllipse(QRectF(legend_x, y, 14, 14))
-            painter.setPen(QColor("#fff"))
-            painter.setFont(QFont("Segoe UI", 8, QFont.Bold))
-            painter.drawText(QRectF(legend_x, y, 14, 14), Qt.AlignCenter, icon)
-            painter.setPen(QColor("#1f2c3a"))
-            painter.setFont(QFont("Segoe UI", 9))
-            painter.drawText(legend_x + 20, y + 12, label)
-
-    def mouseMoveEvent(self, event):
-        # Show tooltip if hovering over an event marker
-        if not self._marker_tooltips:
-            self.setToolTip("")
-            return
-        pos = event.position() if hasattr(event, 'position') else event.pos()
-        for rect, tip in self._marker_tooltips:
-            if rect.contains(pos):
-                self.setToolTip(tip)
-                return
-        self.setToolTip("")
-
-        painter.setPen(QPen(QColor("#9f1d1d"), 1, Qt.DashLine))
-        painter.drawLine(int(marker_x), canvas.top(), int(marker_x), canvas.bottom())
-        painter.drawLine(canvas.left(), int(marker_y), canvas.right(), int(marker_y))
-
-        painter.setPen(QColor("#1f2c3a"))
-        label = self._location_label or "Selected Location"
-        painter.drawText(
-            canvas.adjusted(12, 12, -12, -12),
-            Qt.AlignTop | Qt.AlignLeft,
-            f"{label}\nLat: {self._latitude:.4f}  Lon: {self._longitude:.4f}",
-        )
+# ScenarioMapCanvas has been replaced by LeafletMapView (ui/map_view.py).
+# The alias keeps any external code that references the old name working.
+ScenarioMapCanvas = LeafletMapView
 
 
 class MainWindow(QMainWindow):
@@ -412,7 +241,7 @@ class MainWindow(QMainWindow):
         self.lineage_tree: QTreeWidget | None = None
         self.compare_tab_index: int | None = None
         self.map_tab_index: int | None = None
-        self.map_canvas: ScenarioMapCanvas | None = None
+        self.map_canvas: LeafletMapView | None = None
         self.timeline_slider: QSlider | None = None
         self.timeline_day_label: QLabel | None = None
         self.timeline_summary: QTextEdit | None = None
@@ -1190,7 +1019,7 @@ class MainWindow(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout(widget)
 
-        self.map_canvas = ScenarioMapCanvas(widget)
+        self.map_canvas = LeafletMapView(widget)
         layout.addWidget(self._section_header("Operational Map"))
         layout.addWidget(self._subtle_hint("Marker updates from selected coordinates and timeline day."))
         layout.addWidget(self.map_canvas)
