@@ -7,6 +7,15 @@ from dataclasses import dataclass
 class ThemeTokens:
     font_family: str = "Segoe UI Variable"
     base_font_size: int = 11
+    # WCAG 1.4.11: input border must be ≥ 3:1 against the white field background.
+    # #7390a2 achieves 3.37:1 against #ffffff.
+    input_border_color: str = "#7390a2"
+    # WCAG 2.4.7 / 1.4.11: focus ring uses the primary brand blue.
+    # #1474a3 achieves 5.18:1 against #ffffff.
+    focus_ring_color: str = "#1474a3"
+    # WCAG 1.4.3: text-selection background must be ≥ 4.5:1 against the
+    # selected (white) text.  #135f90 achieves 6.84:1 against #ffffff.
+    input_selection_bg: str = "#135f90"
 
 
 THEME_TOKENS = ThemeTokens()
@@ -82,12 +91,13 @@ QLabel#ValidationBanner {
     font-weight: 600;
 }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
-    border: 1px solid #c2d0da;
+    border: 1px solid #7390a2;
     border-radius: 6px;
     background: #ffffff;
     color: #142836;
     padding: 6px;
-    selection-background-color: #1f84b3;
+    selection-background-color: #135f90;
+    selection-color: #ffffff;
 }
 QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
     min-height: 34px;
@@ -138,6 +148,44 @@ QScrollArea {
 }
 QScrollArea > QWidget > QWidget#ScenarioContent {
     background: #ffffff;
+}
+QLineEdit:focus, QComboBox:focus, QSpinBox:focus, QDoubleSpinBox:focus, QTextEdit:focus {
+    /* WCAG 2.4.7 Focus Visible — 2 px primary-blue ring; padding reduced by
+       1 px each side so the overall widget height is unchanged. */
+    border: 2px solid #1474a3;
+    padding: 5px;
+}
+QLineEdit:disabled, QComboBox:disabled, QSpinBox:disabled, QDoubleSpinBox:disabled, QTextEdit:disabled {
+    background: #f0f4f7;
+    color: #6e8fa0;
+    border-color: #b6cad4;
+}
+QPushButton:focus {
+    /* WCAG 2.4.7 — same 2 px ring; padding compensated to avoid size jitter. */
+    border: 2px solid #1474a3;
+    padding: 6px 11px;
+}
+QPushButton:pressed {
+    background: #d0e8f2;
+    border-color: #7ab4cc;
+}
+QPushButton:disabled {
+    background: #f0f4f7;
+    color: #7a9aaa;
+    border-color: #c0d4de;
+}
+QToolButton:pressed {
+    background: #0c5a7c;
+}
+QToolButton:disabled {
+    background: #8ab5c9;
+    color: #ddedf5;
+    border-color: #79a3b8;
+}
+QListWidget::item:selected, QTableWidget::item:selected, QTreeWidget::item:selected {
+    /* WCAG 1.4.3 — #135f90 bg with white text = 6.84:1 ✅ */
+    background: #135f90;
+    color: #ffffff;
 }
 QLabel#MetricLabel {
     background: #eef5fb;
