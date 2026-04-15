@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from time import perf_counter
+from typing import Callable
 
 from domain.enums import ConfidenceLevel
 from domain.models import AnalysisSummary, AssumptionRecord, RiskFlag, Scenario
@@ -11,33 +12,61 @@ from engine.modules.staffing import compute_staffing
 from engine.modules.transport import compute_transport
 
 
+class AnalysisCancelled(RuntimeError):
+    pass
+
+
 class PlanningEngine:
     def __init__(self, assumption_registry: tuple[AssumptionRecord, ...]) -> None:
         self.assumption_registry = assumption_registry
         self.assumption_index = self._build_index(assumption_registry)
 
-    def analyze(self, scenario: Scenario) -> AnalysisSummary:
+    def analyze(
+        self,
+        scenario: Scenario,
+        should_cancel: Callable[[], bool] | None = None,
+        progress_callback: Callable[[int, str], None] | None = None,
+    ) -> AnalysisSummary:
+        def report(percent: int, message: str) -> None:
+            if progress_callback is not None:
+                progress_callback(percent, message)
+
+        def check_cancel() -> None:
+            if should_cancel is not None and should_cancel():
+                raise AnalysisCancelled("Analysis cancelled")
+
         started = perf_counter()
+        report(5, "Starting analysis")
+        check_cancel()
 
         step_started = perf_counter()
+        report(15, "Computing needs")
         needs = compute_needs(scenario, self.assumption_index)
         needs_ms = (perf_counter() - step_started) * 1000.0
+        check_cancel()
 
         step_started = perf_counter()
+        report(35, "Computing staffing")
         staffing = compute_staffing(scenario, self.assumption_index)
         staffing_ms = (perf_counter() - step_started) * 1000.0
+        check_cancel()
 
         step_started = perf_counter()
+        report(55, "Computing transport")
         transport = compute_transport(scenario, self.assumption_index)
         transport_ms = (perf_counter() - step_started) * 1000.0
+        check_cancel()
 
         step_started = perf_counter()
+        report(75, "Computing costs")
         costs = compute_costs(
             scenario,
             needs,
             transport_reliability_buffer=self.assumption_index.transport_reliability_buffer,
         )
         costs_ms = (perf_counter() - step_started) * 1000.0
+        check_cancel()
+        report(90, "Finalizing summary")
 
         water_coverage = needs.water_coverage
         food_coverage = needs.food_coverage
@@ -146,6 +175,7 @@ class PlanningEngine:
             "perf_costs_ms": round(costs_ms, 3),
             "perf_total_analyze_ms": round((perf_counter() - started) * 1000.0, 3),
         }
+        report(100, "Complete")
 
         return AnalysisSummary(
             critical_coverage_percent=round(critical_coverage * 100, 1),

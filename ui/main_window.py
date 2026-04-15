@@ -5,8 +5,8 @@ from pathlib import Path
 from shutil import copyfile
 from time import perf_counter
 
-from PySide6.QtCore import Qt, QRectF, QTimer
-from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
+from PySide6.QtCore import Qt, QRectF, QThread, QTimer, Slot
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QFont, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -72,6 +72,7 @@ from services.report_export import write_text_report
 from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
 from services.scenario_factory import build_default_scenario
 from ui.theme import APP_STYLESHEET, THEME_TOKENS
+from ui.workers import AnalysisWorker, ComparisonWorker
 
 
 def build_comparison_output_text(
@@ -424,7 +425,19 @@ class MainWindow(QMainWindow):
         self.transport_add_button: QPushButton | None = None
         self.transport_remove_button: QPushButton | None = None
         self.save_button: QPushButton | None = None
+        self.analyze_button: QPushButton | None = None
+        self.run_compare_button: QPushButton | None = None
         self.last_comparison_payload: dict[str, object] | None = None
+        self.analyze_action: QAction | None = None
+        self.compare_action: QAction | None = None
+        self.cancel_task_action: QAction | None = None
+        self._analysis_thread: QThread | None = None
+        self._analysis_worker: AnalysisWorker | None = None
+        self._analysis_context: str | None = None
+        self._comparison_thread: QThread | None = None
+        self._comparison_worker: ComparisonWorker | None = None
+        self._comparison_context: dict[str, object] | None = None
+        self._active_async_task: str | None = None
         self._suppress_geo_autofill = False
 
         self.setWindowTitle("DRASTIC Planner")
@@ -459,6 +472,44 @@ class MainWindow(QMainWindow):
             # Never block the UI flow because of telemetry persistence issues.
             pass
 
+    def _set_busy_state(self, busy: bool) -> None:
+        if self.analyze_action is not None:
+            self.analyze_action.setEnabled(not busy)
+        if self.compare_action is not None:
+            self.compare_action.setEnabled(not busy)
+        if self.analyze_button is not None:
+            self.analyze_button.setEnabled(not busy)
+        if self.save_button is not None:
+            self.save_button.setEnabled(not busy)
+        if self.run_compare_button is not None:
+            self.run_compare_button.setEnabled(not busy)
+        if self.compare_left_combo is not None:
+            self.compare_left_combo.setEnabled(not busy)
+        if self.compare_right_combo is not None:
+            self.compare_right_combo.setEnabled(not busy)
+        if self.comparison_profile_combo is not None:
+            self.comparison_profile_combo.setEnabled(not busy)
+        if self.metric_filter_combo is not None:
+            self.metric_filter_combo.setEnabled(not busy)
+        if self.scenario_list_widget is not None:
+            self.scenario_list_widget.setEnabled(not busy)
+        if self.cancel_task_action is not None:
+            self.cancel_task_action.setEnabled(busy)
+
+    def _set_task_status(self, message: str) -> None:
+        self.statusBar().showMessage(message)
+
+    def _cancel_active_task(self) -> None:
+        if self._active_async_task == "analysis" and self._analysis_worker is not None:
+            self._analysis_worker.request_cancel()
+            self._set_task_status("Cancelling analysis...")
+            return
+        if self._active_async_task == "comparison" and self._comparison_worker is not None:
+            self._comparison_worker.request_cancel()
+            self._set_task_status("Cancelling comparison...")
+            return
+        self._set_task_status("No active background task to cancel.")
+
     def _section_header(self, text: str) -> QLabel:
         label = QLabel(text)
         label.setObjectName("SectionHeader")
@@ -489,6 +540,14 @@ class MainWindow(QMainWindow):
         analyze_action.setStatusTip("Analyze the active scenario with the planning engine")
         analyze_action.triggered.connect(self._run_analysis)
         toolbar.addAction(analyze_action)
+        self.analyze_action = analyze_action
+
+        cancel_task_action = QAction("Cancel Task", self)
+        cancel_task_action.setStatusTip("Cancel the currently running background task")
+        cancel_task_action.triggered.connect(self._cancel_active_task)
+        cancel_task_action.setEnabled(False)
+        toolbar.addAction(cancel_task_action)
+        self.cancel_task_action = cancel_task_action
 
         branch_action = QAction("Branch Variant", self)
         branch_action.setStatusTip("Create a variant from the active scenario")
@@ -504,6 +563,7 @@ class MainWindow(QMainWindow):
         compare_action.setStatusTip("Open the scenario comparison workspace")
         compare_action.triggered.connect(self._open_compare_tab)
         toolbar.addAction(compare_action)
+        self.compare_action = compare_action
 
         export_action = QAction("Export", self)
         export_action.setStatusTip("Export the active scenario package")
@@ -877,6 +937,7 @@ class MainWindow(QMainWindow):
         self.save_button = save_button
         analyze_button = QPushButton("Analyze Scenario")
         analyze_button.clicked.connect(self._run_analysis)
+        self.analyze_button = analyze_button
         preview_button = QPushButton("Preview Changes")
         preview_button.clicked.connect(self._preview_changes)
         button_layout.addWidget(save_button)
@@ -1089,14 +1150,6 @@ class MainWindow(QMainWindow):
         else:
             self._on_timeline_pause()
 
-    # Ensure pause on manual slider move
-    def _on_timeline_day_changed(self, value: int) -> None:
-        if self.timeline_timer.isActive():
-            self._on_timeline_pause()
-        if self.timeline_day_label is not None:
-            self.timeline_day_label.setText(f"Day {value}")
-        self._refresh_timeline_summary()
-
     def _build_compare_tab(self) -> QWidget:
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -1114,6 +1167,7 @@ class MainWindow(QMainWindow):
         self.metric_filter_combo.currentIndexChanged.connect(self._run_comparison)
         run_compare_button = QPushButton("Run Comparison")
         run_compare_button.clicked.connect(self._run_comparison)
+        self.run_compare_button = run_compare_button
         copy_compare_button = QPushButton("Copy Summary")
         copy_compare_button.clicked.connect(self._copy_comparison_output)
         swap_button = QPushButton("Swap")
@@ -1749,6 +1803,10 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Saved scenario: {self.active_scenario.name}")
 
     def _run_analysis(self) -> None:
+        if self._active_async_task is not None:
+            self._set_task_status("A background task is already running.")
+            return
+
         scenario = self._build_scenario_from_editor()
         issues = self._validate_scenario(scenario)
         self._set_validation_issues(issues)
@@ -1759,33 +1817,14 @@ class MainWindow(QMainWindow):
                 issues[0],
             )
             return
-        started = perf_counter()
         self.active_scenario = scenario
-        analyze_started = perf_counter()
-        self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
-        analyze_ms = (perf_counter() - analyze_started) * 1000.0
-
-        render_started = perf_counter()
-        self._update_summary_panel(self.initial_analysis)
-        self._update_results_view(self.initial_analysis)
-        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
-        render_ms = (perf_counter() - render_started) * 1000.0
-
-        self._record_performance_event(
-            "analysis_run_total",
-            (perf_counter() - started) * 1000.0,
-            details={
-                "analyze_ms": round(analyze_ms, 3),
-                "render_ms": round(render_ms, 3),
-                "resource_count": len(self.active_scenario.resources),
-                "personnel_count": len(self.active_scenario.personnel),
-                "transport_count": len(self.active_scenario.transportation),
-                "duration_days": self.active_scenario.hazard_profile.duration_days,
-            },
-        )
-        self.statusBar().showMessage(f"Analysis updated for scenario: {self.active_scenario.name}")
+        self._start_analysis_worker(scenario, context="run")
 
     def _load_selected_scenario(self) -> None:
+        if self._active_async_task is not None:
+            self._set_task_status("Please wait for the active task to finish before switching scenarios.")
+            return
+
         if self.scenario_list_widget is None:
             return
         items = self.scenario_list_widget.selectedItems()
@@ -1799,33 +1838,10 @@ class MainWindow(QMainWindow):
         if scenario is None:
             return
 
-        started = perf_counter()
         self.active_scenario = scenario
-        analyze_started = perf_counter()
-        self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
-        analyze_ms = (perf_counter() - analyze_started) * 1000.0
-
-        render_started = perf_counter()
         self._populate_editor_from_scenario(self.active_scenario)
         self._refresh_validation_banner()
-        self._update_summary_panel(self.initial_analysis)
-        self._update_results_view(self.initial_analysis)
-        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
-        render_ms = (perf_counter() - render_started) * 1000.0
-
-        self._record_performance_event(
-            "analysis_load_total",
-            (perf_counter() - started) * 1000.0,
-            details={
-                "analyze_ms": round(analyze_ms, 3),
-                "render_ms": round(render_ms, 3),
-                "resource_count": len(self.active_scenario.resources),
-                "personnel_count": len(self.active_scenario.personnel),
-                "transport_count": len(self.active_scenario.transportation),
-                "duration_days": self.active_scenario.hazard_profile.duration_days,
-            },
-        )
-        self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
+        self._start_analysis_worker(self.active_scenario, context="load")
 
     def _validate_scenario(self, scenario: Scenario) -> list[str]:
         issues: list[str] = []
@@ -1897,6 +1913,10 @@ class MainWindow(QMainWindow):
         self.workspace_tabs.setCurrentIndex(self.compare_tab_index)
 
     def _run_comparison(self) -> None:
+        if self._active_async_task is not None:
+            self._set_task_status("A background task is already running.")
+            return
+
         if self.compare_left_combo is None or self.compare_right_combo is None or self.compare_output is None:
             return
         profile = self.comparison_profile_combo.currentText() if self.comparison_profile_combo else "Balanced"
@@ -1916,12 +1936,141 @@ class MainWindow(QMainWindow):
         if left_scenario is None or right_scenario is None:
             self.compare_output.setPlainText("Unable to load one or both scenarios for comparison.")
             return
+        left_lineage = self.scenario_repository.get_lineage(left_scenario.scenario_id)
+        right_lineage = self.scenario_repository.get_lineage(right_scenario.scenario_id)
+        self._comparison_context = {
+            "profile": profile,
+            "metric_filter": metric_filter,
+            "profile_weights": profile_weights,
+            "lineage_left": self._format_lineage(left_lineage),
+            "lineage_right": self._format_lineage(right_lineage),
+        }
+        self._start_comparison_worker(left_scenario, right_scenario)
 
-        started = perf_counter()
-        left_analysis = self.planning_engine.analyze(left_scenario)
-        right_analysis = self.planning_engine.analyze(right_scenario)
+    def _start_analysis_worker(self, scenario: Scenario, context: str) -> None:
+        self._set_busy_state(True)
+        self._active_async_task = "analysis"
+        self._analysis_context = context
+        self._set_task_status(f"Starting analysis for {scenario.name}...")
+
+        thread = QThread(self)
+        worker = AnalysisWorker(self.planning_engine, scenario)
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_analysis_progress)
+        worker.finished.connect(self._on_analysis_finished)
+        worker.cancelled.connect(self._on_analysis_cancelled)
+        worker.failed.connect(self._on_analysis_failed)
+
+        worker.finished.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._analysis_thread = thread
+        self._analysis_worker = worker
+        thread.start()
+
+    @Slot(int, str)
+    def _on_analysis_progress(self, percent: int, message: str) -> None:
+        self._set_task_status(f"Analysis {percent}% - {message}")
+
+    @Slot(object, object, float)
+    def _on_analysis_finished(self, scenario: Scenario, analysis: AnalysisSummary, elapsed_ms: float) -> None:
+        render_started = perf_counter()
+        self.active_scenario = scenario
+        self.initial_analysis = analysis
+        self._update_summary_panel(self.initial_analysis)
+        self._update_results_view(self.initial_analysis)
+        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
+        render_ms = (perf_counter() - render_started) * 1000.0
+
+        event_name = "analysis_load_total" if self._analysis_context == "load" else "analysis_run_total"
+        self._record_performance_event(
+            event_name,
+            elapsed_ms + render_ms,
+            details={
+                "analyze_ms": round(elapsed_ms, 3),
+                "render_ms": round(render_ms, 3),
+                "resource_count": len(self.active_scenario.resources),
+                "personnel_count": len(self.active_scenario.personnel),
+                "transport_count": len(self.active_scenario.transportation),
+                "duration_days": self.active_scenario.hazard_profile.duration_days,
+            },
+        )
+
+        if self._analysis_context == "load":
+            self._set_task_status(f"Loaded scenario: {self.active_scenario.name}")
+        else:
+            self._set_task_status(f"Analysis updated for scenario: {self.active_scenario.name}")
+        self._finalize_analysis_task()
+
+    @Slot()
+    def _on_analysis_cancelled(self) -> None:
+        self._set_task_status("Analysis cancelled.")
+        self._finalize_analysis_task()
+
+    @Slot(str)
+    def _on_analysis_failed(self, error_message: str) -> None:
+        QMessageBox.warning(self, "Analysis Error", f"Analysis failed: {error_message}")
+        self._set_task_status("Analysis failed.")
+        self._finalize_analysis_task()
+
+    def _finalize_analysis_task(self) -> None:
+        self._analysis_worker = None
+        self._analysis_thread = None
+        self._analysis_context = None
+        self._active_async_task = None
+        self._set_busy_state(False)
+
+    def _start_comparison_worker(self, left_scenario: Scenario, right_scenario: Scenario) -> None:
+        self._set_busy_state(True)
+        self._active_async_task = "comparison"
+        self._set_task_status("Starting comparison...")
+
+        thread = QThread(self)
+        worker = ComparisonWorker(self.planning_engine, left_scenario, right_scenario)
+        worker.moveToThread(thread)
+
+        thread.started.connect(worker.run)
+        worker.progress.connect(self._on_comparison_progress)
+        worker.finished.connect(self._on_comparison_finished)
+        worker.cancelled.connect(self._on_comparison_cancelled)
+        worker.failed.connect(self._on_comparison_failed)
+
+        worker.finished.connect(thread.quit)
+        worker.cancelled.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+
+        self._comparison_thread = thread
+        self._comparison_worker = worker
+        thread.start()
+
+    @Slot(int, str)
+    def _on_comparison_progress(self, percent: int, message: str) -> None:
+        self._set_task_status(f"Comparison {percent}% - {message}")
+
+    @Slot(object, object, object, object, float)
+    def _on_comparison_finished(
+        self,
+        left_scenario: Scenario,
+        right_scenario: Scenario,
+        left_analysis: AnalysisSummary,
+        right_analysis: AnalysisSummary,
+        elapsed_ms: float,
+    ) -> None:
+        context = self._comparison_context or {}
+        profile = str(context.get("profile", "Balanced"))
+        metric_filter = str(context.get("metric_filter", "All Metrics"))
+        profile_weights = context.get("profile_weights", self._comparison_profile_weights(profile))
+        lineage_left = str(context.get("lineage_left", "Unknown"))
+        lineage_right = str(context.get("lineage_right", "Unknown"))
+
         winner = self._comparison_winner(left_analysis, right_analysis, profile)
-
         critical_delta = right_analysis.critical_coverage_percent - left_analysis.critical_coverage_percent
         overall_delta = right_analysis.overall_coverage_percent - left_analysis.overall_coverage_percent
         cost_delta = right_analysis.total_estimated_cost - left_analysis.total_estimated_cost
@@ -1944,9 +2093,6 @@ class MainWindow(QMainWindow):
             winner,
         )
 
-        left_lineage = self.scenario_repository.get_lineage(left_scenario.scenario_id)
-        right_lineage = self.scenario_repository.get_lineage(right_scenario.scenario_id)
-
         output_text = build_comparison_output_text(
             left_scenario=left_scenario,
             right_scenario=right_scenario,
@@ -1956,8 +2102,8 @@ class MainWindow(QMainWindow):
             profile_weights=profile_weights,
             metric_filter=metric_filter,
             winner=winner,
-            lineage_left=self._format_lineage(left_lineage),
-            lineage_right=self._format_lineage(right_lineage),
+            lineage_left=lineage_left,
+            lineage_right=lineage_right,
         )
 
         self.last_comparison_payload = {
@@ -1969,13 +2115,15 @@ class MainWindow(QMainWindow):
             "profile_weights": profile_weights,
             "metric_filter": metric_filter,
             "winner": winner,
-            "lineage_left": self._format_lineage(left_lineage),
-            "lineage_right": self._format_lineage(right_lineage),
+            "lineage_left": lineage_left,
+            "lineage_right": lineage_right,
         }
-        self.compare_output.setPlainText(output_text)
+        if self.compare_output is not None:
+            self.compare_output.setPlainText(output_text)
+
         self._record_performance_event(
             "comparison_total",
-            (perf_counter() - started) * 1000.0,
+            elapsed_ms,
             details={
                 "left_resources": len(left_scenario.resources),
                 "right_resources": len(right_scenario.resources),
@@ -1985,6 +2133,26 @@ class MainWindow(QMainWindow):
                 "right_transport": len(right_scenario.transportation),
             },
         )
+        self._set_task_status("Comparison complete.")
+        self._finalize_comparison_task()
+
+    @Slot()
+    def _on_comparison_cancelled(self) -> None:
+        self._set_task_status("Comparison cancelled.")
+        self._finalize_comparison_task()
+
+    @Slot(str)
+    def _on_comparison_failed(self, error_message: str) -> None:
+        QMessageBox.warning(self, "Comparison Error", f"Comparison failed: {error_message}")
+        self._set_task_status("Comparison failed.")
+        self._finalize_comparison_task()
+
+    def _finalize_comparison_task(self) -> None:
+        self._comparison_worker = None
+        self._comparison_thread = None
+        self._comparison_context = None
+        self._active_async_task = None
+        self._set_busy_state(False)
 
     def _swap_comparison_selection(self) -> None:
         if self.compare_left_combo is None or self.compare_right_combo is None:
@@ -2255,6 +2423,8 @@ class MainWindow(QMainWindow):
         )
 
     def _on_timeline_day_changed(self, value: int) -> None:
+        if self.timeline_timer.isActive():
+            self._on_timeline_pause()
         if self.timeline_day_label is not None:
             self.timeline_day_label.setText(f"Day {value}")
         self._refresh_timeline_summary()
@@ -2413,3 +2583,13 @@ class MainWindow(QMainWindow):
             content=report_text,
         )
         self.statusBar().showMessage(f"Exported comparison report: {output_path}")
+
+    def closeEvent(self, event: QCloseEvent) -> None:
+        self._cancel_active_task()
+        if self._analysis_thread is not None:
+            self._analysis_thread.quit()
+            self._analysis_thread.wait(1500)
+        if self._comparison_thread is not None:
+            self._comparison_thread.quit()
+            self._comparison_thread.wait(1500)
+        super().closeEvent(event)
