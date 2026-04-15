@@ -25,6 +25,18 @@ from PySide6.QtWebEngineWidgets import QWebEngineView
 _LEAFLET_CSS = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
 _LEAFLET_JS  = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
 
+# CARTO Voyager tiles require no Referer header and are freely embeddable.
+# OSM tile servers block requests from QtWebEngine because it sends no Referer.
+# Single braces here are correct: this string is a substituted VALUE (not a format
+# template), so {s}/{z}/{x}/{y}/{r} are passed through as-is for Leaflet to expand.
+_TILE_URL   = "https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png"
+_TILE_ATTR  = (
+    "&copy; <a href='https://www.openstreetmap.org/copyright'>OpenStreetMap</a> "
+    "contributors &copy; <a href='https://carto.com/attributions'>CARTO</a>"
+)
+# Set a real origin so QtWebEngine doesn't treat the page as about:blank.
+_BASE_URL   = "https://carto.com/"
+
 _MAP_HTML = """\
 <!DOCTYPE html>
 <html lang="en">
@@ -67,9 +79,9 @@ _MAP_HTML = """\
       attributionControl: true
     }}).setView([20, 0], 2);
 
-    L.tileLayer('https://{{s}}.tile.openstreetmap.org/{{z}}/{{x}}/{{y}}.png', {{
-      maxZoom: 18,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
+    L.tileLayer('{tile_url}', {{
+      maxZoom: 19,
+      attribution: `{tile_attr}`
     }}).addTo(map);
 
     // ------------------------------------------------------------------ state
@@ -185,7 +197,7 @@ _MAP_HTML = """\
   </script>
 </body>
 </html>
-""".format(leaflet_css=_LEAFLET_CSS, leaflet_js=_LEAFLET_JS)
+""".format(leaflet_css=_LEAFLET_CSS, leaflet_js=_LEAFLET_JS, tile_url=_TILE_URL, tile_attr=_TILE_ATTR)
 
 
 class LeafletMapView(QWebEngineView):
@@ -202,7 +214,7 @@ class LeafletMapView(QWebEngineView):
         self._pending_overlay: tuple | None = None
         self._page_loaded = False
         self.loadFinished.connect(self._on_load_finished)
-        self.setHtml(_MAP_HTML, QUrl("about:blank"))
+        self.setHtml(_MAP_HTML, QUrl(_BASE_URL))
 
     # ------------------------------------------------------------------
     # Public API — matches ScenarioMapCanvas exactly
