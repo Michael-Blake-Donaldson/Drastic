@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import sys
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QApplication
 
 from app.config import AppConfig
@@ -31,6 +32,11 @@ def run_desktop_app() -> int:
     database_manager.initialize()
     scenario_repository = ScenarioRepository(config.database_path)
 
+    # Pass-through rounding gives correct fractional-DPI rendering at 125 %, 150 %, etc.
+    # Must be set before the QApplication instance is created.
+    QApplication.setHighDpiScaleFactorRoundingPolicy(
+        Qt.HighDpiScaleFactorRoundingPolicy.PassThrough
+    )
     app = QApplication(sys.argv)
     app.setApplicationName(config.app_name)
     app.setOrganizationName(config.organization_name)

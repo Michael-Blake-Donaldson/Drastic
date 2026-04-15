@@ -6,7 +6,7 @@ from shutil import copyfile
 from time import perf_counter
 
 from PySide6.QtCore import Qt, QRectF, QThread, QTimer, Slot
-from PySide6.QtGui import QAction, QCloseEvent, QColor, QFont, QPainter, QPen
+from PySide6.QtGui import QAction, QCloseEvent, QColor, QFont, QKeySequence, QPainter, QPen
 from PySide6.QtWidgets import (
     QApplication,
     QComboBox,
@@ -450,10 +450,47 @@ class MainWindow(QMainWindow):
         self._build_central_workspace()
         self.setStatusBar(QStatusBar(self))
         self.statusBar().showMessage(f"Offline-first mode enabled • Database: {self.config.database_path}")
+        self._setup_tab_order()
 
     def _apply_modern_theme(self) -> None:
         self.setFont(QFont(THEME_TOKENS.font_family, THEME_TOKENS.base_font_size))
         self.setStyleSheet(APP_STYLESHEET)
+
+    def _setup_tab_order(self) -> None:
+        """Set explicit keyboard tab order through the scenario editor form."""
+        ordered: list[QWidget] = [
+            w for w in [
+                self.scenario_search_input,
+                self.scenario_status_filter_combo,
+                self.scenario_list_widget,
+                self.name_input,
+                self.world_region_combo,
+                self.country_combo,
+                self.region_combo,
+                self.latitude_input,
+                self.longitude_input,
+                self.hazard_combo,
+                self.severity_input,
+                self.duration_input,
+                self.infrastructure_damage_input,
+                self.total_population_input,
+                self.displaced_population_input,
+                self.children_input,
+                self.older_adults_input,
+                self.pregnant_input,
+                self.medically_vulnerable_input,
+                self.road_access_input,
+                self.health_operability_input,
+                self.water_availability_input,
+                self.food_supply_ratio_input,
+                self.notes_input,
+                self.save_button,
+                self.analyze_button,
+            ]
+            if w is not None
+        ]
+        for first, second in zip(ordered, ordered[1:]):
+            QWidget.setTabOrder(first, second)
 
     def _record_performance_event(
         self,
@@ -527,30 +564,35 @@ class MainWindow(QMainWindow):
         self.addToolBar(toolbar)
 
         new_project_action = QAction("New Scenario", self)
-        new_project_action.setStatusTip("Create a new scenario planning record")
+        new_project_action.setShortcut(QKeySequence("Ctrl+N"))
+        new_project_action.setStatusTip("Create a new scenario planning record (Ctrl+N)")
         new_project_action.triggered.connect(self._create_new_scenario)
         toolbar.addAction(new_project_action)
 
         save_action = QAction("Save Scenario", self)
-        save_action.setStatusTip("Persist the active scenario to SQLite")
+        save_action.setShortcut(QKeySequence("Ctrl+S"))
+        save_action.setStatusTip("Persist the active scenario to SQLite (Ctrl+S)")
         save_action.triggered.connect(self._save_active_scenario)
         toolbar.addAction(save_action)
 
         analyze_action = QAction("Run Analysis", self)
-        analyze_action.setStatusTip("Analyze the active scenario with the planning engine")
+        analyze_action.setShortcut(QKeySequence("Ctrl+R"))
+        analyze_action.setStatusTip("Analyze the active scenario with the planning engine (Ctrl+R)")
         analyze_action.triggered.connect(self._run_analysis)
         toolbar.addAction(analyze_action)
         self.analyze_action = analyze_action
 
         cancel_task_action = QAction("Cancel Task", self)
-        cancel_task_action.setStatusTip("Cancel the currently running background task")
+        cancel_task_action.setShortcut(QKeySequence("Escape"))
+        cancel_task_action.setStatusTip("Cancel the currently running background task (Esc)")
         cancel_task_action.triggered.connect(self._cancel_active_task)
         cancel_task_action.setEnabled(False)
         toolbar.addAction(cancel_task_action)
         self.cancel_task_action = cancel_task_action
 
         branch_action = QAction("Branch Variant", self)
-        branch_action.setStatusTip("Create a variant from the active scenario")
+        branch_action.setShortcut(QKeySequence("Ctrl+B"))
+        branch_action.setStatusTip("Create a variant from the active scenario (Ctrl+B)")
         branch_action.triggered.connect(self._branch_variant)
         toolbar.addAction(branch_action)
 
@@ -560,13 +602,15 @@ class MainWindow(QMainWindow):
         toolbar.addAction(lock_action)
 
         compare_action = QAction("Compare Variants", self)
-        compare_action.setStatusTip("Open the scenario comparison workspace")
+        compare_action.setShortcut(QKeySequence("Ctrl+M"))
+        compare_action.setStatusTip("Open the scenario comparison workspace (Ctrl+M)")
         compare_action.triggered.connect(self._open_compare_tab)
         toolbar.addAction(compare_action)
         self.compare_action = compare_action
 
         export_action = QAction("Export", self)
-        export_action.setStatusTip("Export the active scenario package")
+        export_action.setShortcut(QKeySequence("Ctrl+E"))
+        export_action.setStatusTip("Export the active scenario package (Ctrl+E)")
         export_action.triggered.connect(self._export_active_report)
         toolbar.addAction(export_action)
 
@@ -708,14 +752,20 @@ class MainWindow(QMainWindow):
 
         self.scenario_search_input = QLineEdit()
         self.scenario_search_input.setPlaceholderText("Search scenarios...")
+        self.scenario_search_input.setAccessibleName("Search Scenarios")
+        self.scenario_search_input.setToolTip("Filter the scenario list by name")
         self.scenario_search_input.textChanged.connect(lambda _value: self._refresh_scenario_list())
 
         self.scenario_status_filter_combo = QComboBox()
+        self.scenario_status_filter_combo.setAccessibleName("Status Filter")
+        self.scenario_status_filter_combo.setToolTip("Filter scenarios by workflow status")
         self.scenario_status_filter_combo.addItems(["All Statuses", "Draft", "Review", "Locked"])
         self.scenario_status_filter_combo.currentIndexChanged.connect(lambda _idx: self._refresh_scenario_list())
 
         scenario_list = QListWidget()
         scenario_list.setAlternatingRowColors(True)
+        scenario_list.setAccessibleName("Scenario List")
+        scenario_list.setToolTip("Select a scenario to load it into the editor")
         scenario_list.itemSelectionChanged.connect(self._load_selected_scenario)
         self.scenario_list_widget = scenario_list
 
@@ -762,6 +812,7 @@ class MainWindow(QMainWindow):
 
     def _build_central_workspace(self) -> None:
         tabs = QTabWidget(self)
+        tabs.setAccessibleName("Workspace Tabs")
         tabs.addTab(self._build_overview_tab(), "Scenario")
         tabs.addTab(self._build_assumptions_tab(), "Assumptions")
         tabs.addTab(self._build_results_tab(), "Results")
@@ -769,6 +820,13 @@ class MainWindow(QMainWindow):
         self.compare_tab_index = tabs.addTab(self._build_compare_tab(), "Compare")
         self.workspace_tabs = tabs
         self.setCentralWidget(tabs)
+
+        # Keyboard tab switching: Ctrl+1 … Ctrl+5
+        for _idx, _key in enumerate(["Ctrl+1", "Ctrl+2", "Ctrl+3", "Ctrl+4", "Ctrl+5"]):
+            _act = QAction(self)
+            _act.setShortcut(QKeySequence(_key))
+            _act.triggered.connect(lambda _checked=False, i=_idx: self.workspace_tabs.setCurrentIndex(i))
+            self.addAction(_act)
 
     def _build_overview_tab(self) -> QWidget:
         content = QWidget()
@@ -870,6 +928,50 @@ class MainWindow(QMainWindow):
             ]
         )
 
+        # Accessible names and tooltips for screen readers and keyboard navigation
+        self.name_input.setAccessibleName("Scenario Name")
+        self.name_input.setToolTip("Unique name for this scenario")
+        self.world_region_combo.setAccessibleName("World Region")
+        self.world_region_combo.setToolTip("Broad geographic region for the scenario")
+        self.country_combo.setAccessibleName("Country")
+        self.country_combo.setToolTip("Country within the selected world region")
+        self.region_combo.setAccessibleName("Region or State")
+        self.region_combo.setToolTip("Sub-national region or state within the country")
+        self.latitude_input.setAccessibleName("Latitude")
+        self.latitude_input.setToolTip("Decimal latitude of the scenario centroid (−90 to 90)")
+        self.longitude_input.setAccessibleName("Longitude")
+        self.longitude_input.setToolTip("Decimal longitude of the scenario centroid (−180 to 180)")
+        self.hazard_combo.setAccessibleName("Hazard Type")
+        self.hazard_combo.setToolTip("Primary hazard driving the humanitarian response")
+        self.severity_input.setAccessibleName("Severity Band")
+        self.severity_input.setToolTip("Qualitative severity label, e.g. Moderate, Severe, Catastrophic")
+        self.duration_input.setAccessibleName("Duration in Days")
+        self.duration_input.setToolTip("Expected duration of the emergency phase (1–365 days)")
+        self.infrastructure_damage_input.setAccessibleName("Infrastructure Damage Percent")
+        self.infrastructure_damage_input.setToolTip("Estimated percentage of infrastructure that is damaged or destroyed")
+        self.total_population_input.setAccessibleName("Total Population")
+        self.total_population_input.setToolTip("Total population in the affected area")
+        self.displaced_population_input.setAccessibleName("Displaced Population")
+        self.displaced_population_input.setToolTip("Number of people displaced from their homes")
+        self.children_input.setAccessibleName("Children Under Five")
+        self.children_input.setToolTip("Number of children aged under 5 in the affected population")
+        self.older_adults_input.setAccessibleName("Older Adults")
+        self.older_adults_input.setToolTip("Number of adults aged 60 and over in the affected population")
+        self.pregnant_input.setAccessibleName("Pregnant and Lactating Women")
+        self.pregnant_input.setToolTip("Number of pregnant or lactating women in the affected population")
+        self.medically_vulnerable_input.setAccessibleName("Medically Vulnerable")
+        self.medically_vulnerable_input.setToolTip("Individuals requiring ongoing medical care or medication")
+        self.road_access_input.setAccessibleName("Road Access Score")
+        self.road_access_input.setToolTip("Fraction of road network accessible (0.0 = fully blocked, 1.0 = fully open)")
+        self.health_operability_input.setAccessibleName("Health Facility Operability")
+        self.health_operability_input.setToolTip("Fraction of health facilities operational (0.0–1.0)")
+        self.water_availability_input.setAccessibleName("Local Water Liters Per Day")
+        self.water_availability_input.setToolTip("Local daily water supply in litres available to the affected population")
+        self.food_supply_ratio_input.setAccessibleName("Local Food Supply Ratio")
+        self.food_supply_ratio_input.setToolTip("Fraction of daily food needs met by local supply (0.0–1.0)")
+        self.notes_input.setAccessibleName("Notes")
+        self.notes_input.setToolTip("Free-text notes and contextual observations for this scenario")
+
         context_form.addRow("Scenario Name", self.name_input)
         context_form.addRow("World Region", self.world_region_combo)
         context_form.addRow("Country", self.country_combo)
@@ -933,12 +1035,18 @@ class MainWindow(QMainWindow):
         button_row = QWidget()
         button_layout = QVBoxLayout(button_row)
         save_button = QPushButton("Save Scenario")
+        save_button.setToolTip("Save the current scenario to the database (Ctrl+S)")
+        save_button.setAccessibleName("Save Scenario")
         save_button.clicked.connect(self._save_active_scenario)
         self.save_button = save_button
         analyze_button = QPushButton("Analyze Scenario")
+        analyze_button.setToolTip("Run the planning engine analysis on this scenario (Ctrl+R)")
+        analyze_button.setAccessibleName("Analyze Scenario")
         analyze_button.clicked.connect(self._run_analysis)
         self.analyze_button = analyze_button
         preview_button = QPushButton("Preview Changes")
+        preview_button.setToolTip("Preview unsaved edits before committing them")
+        preview_button.setAccessibleName("Preview Changes")
         preview_button.clicked.connect(self._preview_changes)
         button_layout.addWidget(save_button)
         button_layout.addWidget(analyze_button)
@@ -1156,23 +1264,39 @@ class MainWindow(QMainWindow):
 
         selector_row = QHBoxLayout()
         self.compare_left_combo = QComboBox()
+        self.compare_left_combo.setAccessibleName("Scenario A")
+        self.compare_left_combo.setToolTip("Select the first scenario for comparison (Scenario A)")
         self.compare_right_combo = QComboBox()
+        self.compare_right_combo.setAccessibleName("Scenario B")
+        self.compare_right_combo.setToolTip("Select the second scenario for comparison (Scenario B)")
         self.comparison_profile_combo = QComboBox()
+        self.comparison_profile_combo.setAccessibleName("Optimization Profile")
+        self.comparison_profile_combo.setToolTip("Weighting profile used when scoring comparison differences")
         self.comparison_profile_combo.addItems(["Balanced", "Coverage First", "Cost First"])
         self.metric_filter_combo = QComboBox()
+        self.metric_filter_combo.setAccessibleName("Metric Filter")
+        self.metric_filter_combo.setToolTip("Limit the comparison output to a specific metric category")
         self.metric_filter_combo.addItems(["All Metrics", "Coverage", "Cost", "Staffing", "Transport"])
         self.compare_left_combo.currentIndexChanged.connect(self._run_comparison)
         self.compare_right_combo.currentIndexChanged.connect(self._run_comparison)
         self.comparison_profile_combo.currentIndexChanged.connect(self._run_comparison)
         self.metric_filter_combo.currentIndexChanged.connect(self._run_comparison)
         run_compare_button = QPushButton("Run Comparison")
+        run_compare_button.setToolTip("Run comparison analysis between Scenario A and Scenario B")
+        run_compare_button.setAccessibleName("Run Comparison")
         run_compare_button.clicked.connect(self._run_comparison)
         self.run_compare_button = run_compare_button
         copy_compare_button = QPushButton("Copy Summary")
+        copy_compare_button.setToolTip("Copy the comparison summary text to clipboard")
+        copy_compare_button.setAccessibleName("Copy Comparison Summary")
         copy_compare_button.clicked.connect(self._copy_comparison_output)
         swap_button = QPushButton("Swap")
+        swap_button.setToolTip("Swap Scenario A and Scenario B selections")
+        swap_button.setAccessibleName("Swap Scenarios")
         swap_button.clicked.connect(self._swap_comparison_selection)
         export_compare_button = QPushButton("Export Comparison")
+        export_compare_button.setToolTip("Export the comparison report to file")
+        export_compare_button.setAccessibleName("Export Comparison Report")
         export_compare_button.clicked.connect(self._export_comparison_report)
 
         branch_selected_button = QPushButton("Branch Selected")
