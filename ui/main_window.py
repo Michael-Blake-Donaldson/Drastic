@@ -1179,6 +1179,17 @@ class MainWindow(QMainWindow):
         self.timeline_timer = QTimer(self)
         self.timeline_timer.setInterval(600)  # ms per day step
         self.timeline_timer.timeout.connect(self._on_timeline_tick)
+
+        # Timeline summary and snapshot section
+        self.timeline_summary = QTextEdit()
+        self.timeline_summary.setReadOnly(True)
+        self.timeline_summary.setFont(QFont("Consolas", 10))
+        self.timeline_summary.setMinimumHeight(180)
+        layout.addWidget(self._section_header("Simulation Snapshot"))
+        layout.addWidget(self.timeline_summary)
+
+        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
+        return widget
     def _on_timeline_play(self) -> None:
         if self.timeline_timer.isActive():
             return
@@ -1217,16 +1228,6 @@ class MainWindow(QMainWindow):
         if self.timeline_day_label is not None:
             self.timeline_day_label.setText(f"Day {value}")
         self._refresh_timeline_summary()
-
-        self.timeline_summary = QTextEdit()
-        self.timeline_summary.setReadOnly(True)
-        self.timeline_summary.setFont(QFont("Consolas", 10))
-        self.timeline_summary.setMinimumHeight(180)
-        layout.addWidget(self._section_header("Simulation Snapshot"))
-        layout.addWidget(self.timeline_summary)
-
-        self._refresh_map_tab(self.active_scenario, self.initial_analysis)
-        return widget
 
     def _build_compare_tab(self) -> QWidget:
         widget = QWidget()
