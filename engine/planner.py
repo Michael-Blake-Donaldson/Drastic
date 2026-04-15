@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from time import perf_counter
+
 from domain.enums import ConfidenceLevel
 from domain.models import AnalysisSummary, AssumptionRecord, RiskFlag, Scenario
 from engine.contracts import AssumptionIndex
@@ -15,14 +17,27 @@ class PlanningEngine:
         self.assumption_index = self._build_index(assumption_registry)
 
     def analyze(self, scenario: Scenario) -> AnalysisSummary:
+        started = perf_counter()
+
+        step_started = perf_counter()
         needs = compute_needs(scenario, self.assumption_index)
+        needs_ms = (perf_counter() - step_started) * 1000.0
+
+        step_started = perf_counter()
         staffing = compute_staffing(scenario, self.assumption_index)
+        staffing_ms = (perf_counter() - step_started) * 1000.0
+
+        step_started = perf_counter()
         transport = compute_transport(scenario, self.assumption_index)
+        transport_ms = (perf_counter() - step_started) * 1000.0
+
+        step_started = perf_counter()
         costs = compute_costs(
             scenario,
             needs,
             transport_reliability_buffer=self.assumption_index.transport_reliability_buffer,
         )
+        costs_ms = (perf_counter() - step_started) * 1000.0
 
         water_coverage = needs.water_coverage
         food_coverage = needs.food_coverage
@@ -125,6 +140,11 @@ class PlanningEngine:
             "staffing_available_by_role": {
                 role: round(value, 2) for role, value in staffing.available_by_role.items()
             },
+            "perf_needs_ms": round(needs_ms, 3),
+            "perf_staffing_ms": round(staffing_ms, 3),
+            "perf_transport_ms": round(transport_ms, 3),
+            "perf_costs_ms": round(costs_ms, 3),
+            "perf_total_analyze_ms": round((perf_counter() - started) * 1000.0, 3),
         }
 
         return AnalysisSummary(

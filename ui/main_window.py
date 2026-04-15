@@ -3,6 +3,7 @@ from __future__ import annotations
 from dataclasses import replace
 from pathlib import Path
 from shutil import copyfile
+from time import perf_counter
 
 from PySide6.QtCore import Qt, QRectF, QTimer
 from PySide6.QtGui import QAction, QColor, QFont, QPainter, QPen
@@ -40,6 +41,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.config import AppConfig
+from app.performance import append_performance_event
 from domain.enums import HazardType, ScenarioStatus
 from domain.models import (
     AnalysisSummary,
@@ -69,6 +71,7 @@ from reference_data.geography import (
 from services.report_export import write_text_report
 from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
 from services.scenario_factory import build_default_scenario
+from ui.theme import APP_STYLESHEET, THEME_TOKENS
 
 
 def build_comparison_output_text(
@@ -436,160 +439,25 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage(f"Offline-first mode enabled • Database: {self.config.database_path}")
 
     def _apply_modern_theme(self) -> None:
-        self.setFont(QFont("Segoe UI Variable", 11))
-        self.setStyleSheet(
-            """
-            QMainWindow {
-                background-color: #f2f5f8;
-            }
-            QDockWidget::title {
-                background: #e8eef3;
-                color: #163447;
-                padding: 8px 10px;
-                font-weight: 600;
-                border-bottom: 1px solid #d3dde6;
-            }
-            QToolBar {
-                background: #f8fafc;
-                border: 1px solid #dbe5ed;
-                spacing: 8px;
-                padding: 6px;
-            }
-            QToolButton {
-                background: #1474a3;
-                color: #ffffff;
-                border: 1px solid #0f628a;
-                border-radius: 6px;
-                padding: 7px 12px;
-                font-weight: 600;
-            }
-            QToolButton:hover {
-                background: #0f678f;
-            }
-            QTabWidget::pane {
-                border: 1px solid #d4dfe8;
-                background: #ffffff;
-            }
-            QTabBar::tab {
-                background: #edf2f7;
-                color: #22323d;
-                border: 1px solid #d4dfe8;
-                border-bottom: none;
-                padding: 8px 12px;
-                margin-right: 4px;
-                min-width: 110px;
-            }
-            QTabBar::tab:selected {
-                background: #ffffff;
-                color: #0e4f70;
-                font-weight: 700;
-            }
-            QLabel {
-                color: #1b2d3a;
-                font-size: 12px;
-            }
-            QLabel#SectionHeader {
-                font-size: 14px;
-                font-weight: 700;
-                color: #0f5679;
-                margin-top: 10px;
-                margin-bottom: 4px;
-            }
-            QLabel#SubtleHint {
-                color: #4f6573;
-                margin-bottom: 6px;
-            }
-            QLabel#ValidationBanner {
-                background: #fff0f0;
-                color: #8a1b1b;
-                border: 1px solid #efc1c1;
-                border-radius: 6px;
-                padding: 8px;
-                font-weight: 600;
-            }
-            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox, QTextEdit {
-                border: 1px solid #c2d0da;
-                border-radius: 6px;
-                background: #ffffff;
-                color: #142836;
-                padding: 6px;
-                selection-background-color: #1f84b3;
-            }
-            QLineEdit, QComboBox, QSpinBox, QDoubleSpinBox {
-                min-height: 34px;
-            }
-            QComboBox QAbstractItemView {
-                background: #ffffff;
-                color: #142836;
-                border: 1px solid #c2d0da;
-                selection-background-color: #d9edf9;
-                selection-color: #0f3550;
-                outline: 0;
-            }
-            QComboBox::drop-down {
-                border: none;
-                width: 26px;
-            }
-            QTextEdit {
-                min-height: 120px;
-            }
-            QPushButton {
-                background: #ffffff;
-                color: #145d80;
-                border: 1px solid #aac0cf;
-                border-radius: 6px;
-                padding: 7px 12px;
-                font-weight: 600;
-            }
-            QPushButton:hover {
-                background: #e8f2f8;
-            }
-            QTableWidget, QTreeWidget, QListWidget {
-                background: #ffffff;
-                border: 1px solid #d4dfe8;
-                color: #142631;
-                gridline-color: #e7edf2;
-                alternate-background-color: #f4f9fc;
-            }
-            QHeaderView::section {
-                background: #edf4f9;
-                color: #1f2e38;
-                border: 1px solid #d2dbe2;
-                padding: 6px;
-                font-weight: 700;
-            }
-            QScrollArea {
-                border: none;
-                background: #ffffff;
-            }
-            QScrollArea > QWidget > QWidget#ScenarioContent {
-                background: #ffffff;
-            }
-            QLabel#MetricLabel {
-                background: #eef5fb;
-                border: 1px solid #c7d8e5;
-                border-radius: 6px;
-                color: #12384d;
-                font-size: 12px;
-                font-weight: 700;
-                padding: 6px;
-            }
-            QLabel#CompareCard {
-                background: #f4f9fd;
-                border: 1px solid #c8d9e6;
-                border-radius: 8px;
-                color: #12384d;
-                font-size: 12px;
-                font-weight: 700;
-                padding: 8px;
-                min-height: 44px;
-            }
-            QStatusBar {
-                background: #f5f8fb;
-                color: #1a3c51;
-            }
-            """
-        )
+        self.setFont(QFont(THEME_TOKENS.font_family, THEME_TOKENS.base_font_size))
+        self.setStyleSheet(APP_STYLESHEET)
+
+    def _record_performance_event(
+        self,
+        event_name: str,
+        duration_ms: float,
+        details: dict[str, object] | None = None,
+    ) -> None:
+        try:
+            append_performance_event(
+                self.config.log_directory,
+                event_name,
+                duration_ms,
+                details=details,
+            )
+        except OSError:
+            # Never block the UI flow because of telemetry persistence issues.
+            pass
 
     def _section_header(self, text: str) -> QLabel:
         label = QLabel(text)
@@ -1891,11 +1759,30 @@ class MainWindow(QMainWindow):
                 issues[0],
             )
             return
+        started = perf_counter()
         self.active_scenario = scenario
+        analyze_started = perf_counter()
         self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
+        analyze_ms = (perf_counter() - analyze_started) * 1000.0
+
+        render_started = perf_counter()
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
         self._refresh_map_tab(self.active_scenario, self.initial_analysis)
+        render_ms = (perf_counter() - render_started) * 1000.0
+
+        self._record_performance_event(
+            "analysis_run_total",
+            (perf_counter() - started) * 1000.0,
+            details={
+                "analyze_ms": round(analyze_ms, 3),
+                "render_ms": round(render_ms, 3),
+                "resource_count": len(self.active_scenario.resources),
+                "personnel_count": len(self.active_scenario.personnel),
+                "transport_count": len(self.active_scenario.transportation),
+                "duration_days": self.active_scenario.hazard_profile.duration_days,
+            },
+        )
         self.statusBar().showMessage(f"Analysis updated for scenario: {self.active_scenario.name}")
 
     def _load_selected_scenario(self) -> None:
@@ -1912,13 +1799,32 @@ class MainWindow(QMainWindow):
         if scenario is None:
             return
 
+        started = perf_counter()
         self.active_scenario = scenario
+        analyze_started = perf_counter()
         self.initial_analysis = self.planning_engine.analyze(self.active_scenario)
+        analyze_ms = (perf_counter() - analyze_started) * 1000.0
+
+        render_started = perf_counter()
         self._populate_editor_from_scenario(self.active_scenario)
         self._refresh_validation_banner()
         self._update_summary_panel(self.initial_analysis)
         self._update_results_view(self.initial_analysis)
         self._refresh_map_tab(self.active_scenario, self.initial_analysis)
+        render_ms = (perf_counter() - render_started) * 1000.0
+
+        self._record_performance_event(
+            "analysis_load_total",
+            (perf_counter() - started) * 1000.0,
+            details={
+                "analyze_ms": round(analyze_ms, 3),
+                "render_ms": round(render_ms, 3),
+                "resource_count": len(self.active_scenario.resources),
+                "personnel_count": len(self.active_scenario.personnel),
+                "transport_count": len(self.active_scenario.transportation),
+                "duration_days": self.active_scenario.hazard_profile.duration_days,
+            },
+        )
         self.statusBar().showMessage(f"Loaded scenario: {self.active_scenario.name}")
 
     def _validate_scenario(self, scenario: Scenario) -> list[str]:
@@ -2011,6 +1917,7 @@ class MainWindow(QMainWindow):
             self.compare_output.setPlainText("Unable to load one or both scenarios for comparison.")
             return
 
+        started = perf_counter()
         left_analysis = self.planning_engine.analyze(left_scenario)
         right_analysis = self.planning_engine.analyze(right_scenario)
         winner = self._comparison_winner(left_analysis, right_analysis, profile)
@@ -2066,6 +1973,18 @@ class MainWindow(QMainWindow):
             "lineage_right": self._format_lineage(right_lineage),
         }
         self.compare_output.setPlainText(output_text)
+        self._record_performance_event(
+            "comparison_total",
+            (perf_counter() - started) * 1000.0,
+            details={
+                "left_resources": len(left_scenario.resources),
+                "right_resources": len(right_scenario.resources),
+                "left_personnel": len(left_scenario.personnel),
+                "right_personnel": len(right_scenario.personnel),
+                "left_transport": len(left_scenario.transportation),
+                "right_transport": len(right_scenario.transportation),
+            },
+        )
 
     def _swap_comparison_selection(self) -> None:
         if self.compare_left_combo is None or self.compare_right_combo is None:
@@ -2344,6 +2263,8 @@ class MainWindow(QMainWindow):
         if self.map_canvas is None:
             return
 
+        started = perf_counter()
+
         self.map_canvas.set_location(scenario.latitude, scenario.longitude, scenario.hazard_profile.location_label)
 
         # --- Simulation overlay and events ---
@@ -2378,6 +2299,15 @@ class MainWindow(QMainWindow):
                 self.timeline_day_label.setText(f"Day {self.timeline_slider.value()}")
 
         self._refresh_timeline_summary(analysis)
+        self._record_performance_event(
+            "map_refresh_total",
+            (perf_counter() - started) * 1000.0,
+            details={
+                "timeline_days": scenario.hazard_profile.duration_days,
+                "resource_count": len(scenario.resources),
+                "event_count": len(event_markers),
+            },
+        )
 
     def _refresh_timeline_summary(self, analysis: AnalysisSummary | None = None) -> None:
         if self.timeline_summary is None or self.timeline_slider is None:
