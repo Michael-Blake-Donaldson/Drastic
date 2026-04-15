@@ -72,7 +72,7 @@ from services.report_export import write_text_report
 from services.report_templates import build_comparison_report, build_scenario_report, filtered_metric_deltas
 from services.scenario_factory import build_default_scenario
 from ui.theme import APP_STYLESHEET, THEME_TOKENS
-from ui.workers import AnalysisWorker, ComparisonWorker
+from ui.workers import AnalysisWorker, ComparisonWorker, ComparisonExportWorker, ScenarioExportWorker
 
 
 def build_comparison_output_text(
@@ -438,6 +438,9 @@ class MainWindow(QMainWindow):
         self._comparison_worker: ComparisonWorker | None = None
         self._comparison_context: dict[str, object] | None = None
         self._active_async_task: str | None = None
+        self._export_thread: QThread | None = None
+        self._export_worker: ScenarioExportWorker | ComparisonExportWorker | None = None
+        self.export_action: QAction | None = None
         self._suppress_geo_autofill = False
 
         self.setWindowTitle("DRASTIC Planner")
@@ -530,6 +533,8 @@ class MainWindow(QMainWindow):
             self.metric_filter_combo.setEnabled(not busy)
         if self.scenario_list_widget is not None:
             self.scenario_list_widget.setEnabled(not busy)
+        if self.export_action is not None:
+            self.export_action.setEnabled(not busy)
         if self.cancel_task_action is not None:
             self.cancel_task_action.setEnabled(busy)
 
@@ -544,6 +549,9 @@ class MainWindow(QMainWindow):
         if self._active_async_task == "comparison" and self._comparison_worker is not None:
             self._comparison_worker.request_cancel()
             self._set_task_status("Cancelling comparison...")
+            return
+        if self._active_async_task == "export":
+            self._set_task_status("Export is in progress and cannot be cancelled.")
             return
         self._set_task_status("No active background task to cancel.")
 
@@ -613,6 +621,7 @@ class MainWindow(QMainWindow):
         export_action.setStatusTip("Export the active scenario package (Ctrl+E)")
         export_action.triggered.connect(self._export_active_report)
         toolbar.addAction(export_action)
+        self.export_action = export_action
 
         reload_geo_action = QAction("Reload Geography", self)
         reload_geo_action.setStatusTip("Validate and reload location catalog from CSV")
@@ -2671,42 +2680,95 @@ class MainWindow(QMainWindow):
         self.statusBar().showMessage("Comparison summary copied to clipboard.")
 
     def _export_active_report(self) -> None:
-        analysis = self.planning_engine.analyze(self.active_scenario)
+        if self._active_async_task is not None:
+            self._set_task_status("A task is already running. Please wait before exporting.")
+            return
         timeline_day = self.timeline_slider.value() if self.timeline_slider is not None else 1
-        report_text = build_scenario_report(self.active_scenario, analysis, timeline_day=timeline_day)
+        self._start_scenario_export_worker(self.active_scenario, self.initial_analysis, timeline_day)
 
-        output_path = write_text_report(
+    def _start_scenario_export_worker(
+        self, scenario: Scenario, analysis: AnalysisSummary, timeline_day: int
+    ) -> None:
+        self._set_busy_state(True)
+        self._active_async_task = "export"
+        self._set_task_status("Exporting scenario report...")
+
+        thread = QThread(self)
+        worker = ScenarioExportWorker(
+            scenario,
+            analysis,
+            timeline_day,
             self.config.export_directory,
-            prefix=f"scenario_report_{self.active_scenario.variant_label}",
-            content=report_text,
+            scenario.variant_label,
         )
-        self.statusBar().showMessage(f"Exported scenario report: {output_path}")
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_export_finished)
+        worker.failed.connect(self._on_export_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._export_thread = thread
+        self._export_worker = worker
+        thread.start()
 
     def _export_comparison_report(self) -> None:
         if self.last_comparison_payload is None:
             return
+        if self._active_async_task is not None:
+            self._set_task_status("A task is already running. Please wait before exporting.")
+            return
+        timeline_day = self.timeline_slider.value() if self.timeline_slider is not None else 1
+        self._start_comparison_export_worker(self.last_comparison_payload, timeline_day)
 
-        payload = self.last_comparison_payload
-        report_text = build_comparison_report(
-            left_scenario=payload["left_scenario"],
-            right_scenario=payload["right_scenario"],
-            left_analysis=payload["left_analysis"],
-            right_analysis=payload["right_analysis"],
-            profile=payload["profile"],
-            profile_weights=payload["profile_weights"],
-            metric_filter=payload["metric_filter"],
-            winner=payload["winner"],
-            lineage_left=payload["lineage_left"],
-            lineage_right=payload["lineage_right"],
-            timeline_day=self.timeline_slider.value() if self.timeline_slider is not None else 1,
-        )
+    def _start_comparison_export_worker(
+        self, payload: dict[str, object], timeline_day: int
+    ) -> None:
+        self._set_busy_state(True)
+        self._active_async_task = "export"
+        self._set_task_status("Exporting comparison report...")
 
-        output_path = write_text_report(
+        thread = QThread(self)
+        worker = ComparisonExportWorker(
+            payload,
+            timeline_day,
             self.config.export_directory,
-            prefix="comparison_report",
-            content=report_text,
         )
-        self.statusBar().showMessage(f"Exported comparison report: {output_path}")
+        worker.moveToThread(thread)
+        thread.started.connect(worker.run)
+        worker.finished.connect(self._on_export_finished)
+        worker.failed.connect(self._on_export_failed)
+        worker.finished.connect(thread.quit)
+        worker.failed.connect(thread.quit)
+        thread.finished.connect(worker.deleteLater)
+        thread.finished.connect(thread.deleteLater)
+        self._export_thread = thread
+        self._export_worker = worker
+        thread.start()
+
+    @Slot(object)
+    def _on_export_finished(self, output_path: object) -> None:
+        elapsed_start = perf_counter()
+        self._set_task_status(f"Exported: {output_path}")
+        self._record_performance_event(
+            "export_write_total",
+            (perf_counter() - elapsed_start) * 1000.0,
+            details={"path": str(output_path)},
+        )
+        self._finalize_export_task()
+
+    @Slot(str)
+    def _on_export_failed(self, error_message: str) -> None:
+        QMessageBox.warning(self, "Export Error", f"Export failed: {error_message}")
+        self._set_task_status("Export failed.")
+        self._finalize_export_task()
+
+    def _finalize_export_task(self) -> None:
+        self._export_worker = None
+        self._export_thread = None
+        self._active_async_task = None
+        self._set_busy_state(False)
 
     def closeEvent(self, event: QCloseEvent) -> None:
         self._cancel_active_task()
@@ -2716,4 +2778,7 @@ class MainWindow(QMainWindow):
         if self._comparison_thread is not None:
             self._comparison_thread.quit()
             self._comparison_thread.wait(1500)
+        if self._export_thread is not None:
+            self._export_thread.quit()
+            self._export_thread.wait(1500)
         super().closeEvent(event)

@@ -1,11 +1,14 @@
 from __future__ import annotations
 
+from pathlib import Path
 from time import perf_counter
 
 from PySide6.QtCore import QObject, Signal, Slot
 
 from domain.models import AnalysisSummary, Scenario
 from engine.planner import AnalysisCancelled, PlanningEngine
+from services.report_export import write_text_report
+from services.report_templates import build_comparison_report, build_scenario_report
 
 
 class AnalysisWorker(QObject):
@@ -109,3 +112,86 @@ class ComparisonWorker(QObject):
     def _right_progress(self, percent: int, message: str) -> None:
         scaled = min(100, max(50, 50 + int(percent * 0.5)))
         self.progress.emit(scaled, f"Scenario B: {message}")
+
+
+class ScenarioExportWorker(QObject):
+    """Builds and writes a scenario report entirely off the UI thread."""
+
+    finished = Signal(object)  # Path
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        scenario: Scenario,
+        analysis: AnalysisSummary,
+        timeline_day: int,
+        export_directory: Path,
+        variant_label: str,
+    ) -> None:
+        super().__init__()
+        self._scenario = scenario
+        self._analysis = analysis
+        self._timeline_day = timeline_day
+        self._export_directory = export_directory
+        self._variant_label = variant_label
+
+    @Slot()
+    def run(self) -> None:
+        try:
+            report_text = build_scenario_report(
+                self._scenario, self._analysis, timeline_day=self._timeline_day
+            )
+            output_path = write_text_report(
+                self._export_directory,
+                prefix=f"scenario_report_{self._variant_label}",
+                content=report_text,
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI boundary
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(output_path)
+
+
+class ComparisonExportWorker(QObject):
+    """Builds and writes a comparison report entirely off the UI thread."""
+
+    finished = Signal(object)  # Path
+    failed = Signal(str)
+
+    def __init__(
+        self,
+        payload: dict[str, object],
+        timeline_day: int,
+        export_directory: Path,
+    ) -> None:
+        super().__init__()
+        self._payload = payload
+        self._timeline_day = timeline_day
+        self._export_directory = export_directory
+
+    @Slot()
+    def run(self) -> None:
+        payload = self._payload
+        try:
+            report_text = build_comparison_report(
+                left_scenario=payload["left_scenario"],
+                right_scenario=payload["right_scenario"],
+                left_analysis=payload["left_analysis"],
+                right_analysis=payload["right_analysis"],
+                profile=payload["profile"],
+                profile_weights=payload["profile_weights"],
+                metric_filter=payload["metric_filter"],
+                winner=payload["winner"],
+                lineage_left=payload["lineage_left"],
+                lineage_right=payload["lineage_right"],
+                timeline_day=self._timeline_day,
+            )
+            output_path = write_text_report(
+                self._export_directory,
+                prefix="comparison_report",
+                content=report_text,
+            )
+        except Exception as exc:  # pragma: no cover - defensive UI boundary
+            self.failed.emit(str(exc))
+            return
+        self.finished.emit(output_path)
