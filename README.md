@@ -114,8 +114,3 @@ The system is engineered for practical use:
 
 ## Author
 Michael Donaldson  
-Aspiring Software Engineer
-
-- LinkedIn: [LinkedIn Placeholder](#)
-- Portfolio: [Portfolio Placeholder](#)
-- Email: [Email Placeholder](mailto:your.email@example.com)

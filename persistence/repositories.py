@@ -209,3 +209,11 @@ class ScenarioRepository:
             connection.commit()
 
         return updated_scenario
+
+    def delete_scenario(self, scenario_id: str) -> bool:
+        with sqlite3.connect(self.database_path) as connection:
+            cursor = connection.cursor()
+            cursor.execute("DELETE FROM scenarios WHERE scenario_id = ?", (scenario_id,))
+            deleted = cursor.rowcount > 0
+            connection.commit()
+        return deleted

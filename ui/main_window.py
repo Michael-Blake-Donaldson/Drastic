@@ -203,6 +203,7 @@ class MainWindow(QMainWindow):
         self.scenario_list_widget: QListWidget | None = None
         self.scenario_search_input: QLineEdit | None = None
         self.scenario_status_filter_combo: QComboBox | None = None
+        self.scenario_delete_button: QPushButton | None = None
         self.summary_labels: dict[str, QLabel] = {}
         self.results_notes: QTextEdit | None = None
 
@@ -362,6 +363,8 @@ class MainWindow(QMainWindow):
             self.metric_filter_combo.setEnabled(not busy)
         if self.scenario_list_widget is not None:
             self.scenario_list_widget.setEnabled(not busy)
+        if self.scenario_delete_button is not None:
+            self.scenario_delete_button.setEnabled(not busy)
         if self.export_action is not None:
             self.export_action.setEnabled(not busy)
         if self.cancel_task_action is not None:
@@ -607,9 +610,16 @@ class MainWindow(QMainWindow):
         scenario_list.itemSelectionChanged.connect(self._load_selected_scenario)
         self.scenario_list_widget = scenario_list
 
+        delete_button = QPushButton("Delete Scenario")
+        delete_button.setAccessibleName("Delete Selected Scenario")
+        delete_button.setToolTip("Permanently delete the selected scenario")
+        delete_button.clicked.connect(self._delete_selected_scenario)
+        self.scenario_delete_button = delete_button
+
         wrapper_layout.addWidget(self.scenario_search_input)
         wrapper_layout.addWidget(self.scenario_status_filter_combo)
         wrapper_layout.addWidget(scenario_list)
+        wrapper_layout.addWidget(delete_button)
 
         navigation_dock.setWidget(wrapper)
         self.addDockWidget(Qt.LeftDockWidgetArea, navigation_dock)
@@ -1804,6 +1814,47 @@ class MainWindow(QMainWindow):
         self._populate_editor_from_scenario(self.active_scenario)
         self._refresh_validation_banner()
         self._start_analysis_worker(self.active_scenario, context="load")
+
+    def _delete_selected_scenario(self) -> None:
+        if self.scenario_list_widget is None:
+            return
+        items = self.scenario_list_widget.selectedItems()
+        if not items:
+            self.statusBar().showMessage("No scenario selected.")
+            return
+        scenario_id = items[0].data(Qt.UserRole)
+        scenario_name = items[0].text()
+
+        confirm = QMessageBox.question(
+            self,
+            "Delete Scenario",
+            f"Are you sure you want to permanently delete \"{scenario_name}\"?\n\nThis cannot be undone.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No,
+        )
+        if confirm != QMessageBox.Yes:
+            return
+
+        deleted = self.scenario_repository.delete_scenario(scenario_id)
+        if not deleted:
+            QMessageBox.warning(self, "Delete Failed", "The scenario could not be deleted.")
+            return
+
+        self.statusBar().showMessage(f"Deleted scenario: {scenario_name}")
+        remaining = self.scenario_repository.list_scenarios()
+        if remaining:
+            self._refresh_scenario_list(selected_scenario_id=remaining[0].scenario_id)
+            new_active = self.scenario_repository.get_scenario(remaining[0].scenario_id)
+            if new_active is not None:
+                self.active_scenario = new_active
+                self._populate_editor_from_scenario(self.active_scenario)
+                self._refresh_validation_banner()
+                self._start_analysis_worker(self.active_scenario, context="load")
+        else:
+            from services.scenario_factory import build_seed_scenario
+            self.active_scenario = self.scenario_repository.save_scenario(build_seed_scenario())
+            self._refresh_scenario_list()
+            self._populate_editor_from_scenario(self.active_scenario)
 
     def _validate_scenario(self, scenario: Scenario) -> list[str]:
         issues: list[str] = []
