@@ -2,6 +2,9 @@
 setlocal EnableDelayedExpansion
 title DRASTIC Planner — Build
 
+REM Always run from the script directory so relative paths resolve correctly.
+cd /d "%~dp0"
+
 echo.
 echo ============================================================
 echo   DRASTIC Planner  ^|  Desktop Build Script

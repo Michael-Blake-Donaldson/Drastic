@@ -2,9 +2,12 @@
 # PyInstaller spec for DRASTIC Planner
 # Run via:  build.bat  (or directly: pyinstaller drastic.spec --noconfirm)
 
+from pathlib import Path
+
 from PyInstaller.utils.hooks import collect_all
 
 block_cipher = None
+project_root = str(Path.cwd().resolve())
 
 # ---------------------------------------------------------------------------
 # PySide6 WebEngine requires explicit collection — standard hooks miss
@@ -63,7 +66,7 @@ for _pkg in ("PySide6.QtWebEngineWidgets", "PySide6.QtWebEngineCore"):
 
 a = Analysis(
     ["main.py"],
-    pathex=[],
+    pathex=[project_root],
     binaries=binaries,
     datas=datas,
     hiddenimports=hiddenimports,
