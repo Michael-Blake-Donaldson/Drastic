@@ -50,10 +50,6 @@ The system is engineered for practical use:
 - PyInstaller, Inno Setup
 - unittest
 
-## Demo / Screenshots
-- Demo video: [Demo Link Placeholder](#)
-- Live walkthrough: [Walkthrough Placeholder](#)
-
 ### Screenshots
 - Main workspace: ![Main Workspace Placeholder](docs/screenshots/main-workspace-placeholder.png)
 - Map simulation: ![Map Simulation Placeholder](docs/screenshots/map-simulation-placeholder.png)
