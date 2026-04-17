@@ -50,10 +50,48 @@ The system is engineered for practical use:
 - PyInstaller, Inno Setup
 - unittest
 
-### Screenshots
-- Main workspace: ![Main Workspace Placeholder](docs/screenshots/main-workspace-placeholder.png)
-- Map simulation: ![Map Simulation Placeholder](docs/screenshots/map-simulation-placeholder.png)
-- Comparison output: ![Comparison Placeholder](docs/screenshots/comparison-placeholder.png)
+## Screenshots & Features in Action
+
+This is a fully functional desktop application for humanitarian scenario planning. Import your crisis parameters and get instant operational insights.
+
+### Scenario Editor
+Build structured crisis scenarios with hazard context, population data, infrastructure constraints, and operational resources.
+
+![Scenario Editor](assets/screenshots/scenarioSH.png)
+
+**Features shown:**
+- Structured scenario form with geolocation (latitude/longitude)
+- Population profile breakdown (total, displaced, vulnerable groups)
+- Infrastructure damage and facility operability metrics
+- Resource inventory management (water, food, shelter, apparel)
+- Personnel roster with roles (Medical, Logistics, Engineering, Coordination)
+- Transportation assets (Cargo trucks, Helicopters, Commercial vehicles)
+- Live summary metrics (coverage %, cost, confidence, risk flags)
+- Sidebar scenario browser with search and delete
+
+### Map Simulation
+Visualize the crisis zone with real-time markers, coverage overlays, and day-by-day timeline progression.
+
+![Map Simulation](assets/screenshots/mapSH.png)
+
+**Features shown:**
+- Interactive Leaflet map centered on crisis coordinates
+- Coverage circle showing operational reach
+- Event markers and location pins
+- Timeline player with day-by-day state snapshots
+- Simulation output including resource consumption and personnel status
+- Event log for operational milestones
+
+### Scenario Comparison
+Side-by-side analysis comparing baseline and variant scenario outcomes to evaluate trade-offs.
+
+![Scenario Comparison](assets/screenshots/comparisonSH.png)
+
+**Features shown:**
+- Metric delta comparison between scenarios
+- Weighted profile analysis
+- Coverage, cost, and risk metric filters
+- Detailed operational impact assessment
 
 ## How It Works
 1. Create or load a scenario from SQLite.
